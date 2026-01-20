@@ -197,32 +197,37 @@ describe('parseAllowlist', () => {
   });
 
   it('parses numeric IDs correctly', () => {
-    const result = parseAllowlist('123,456,789');
+    const result = parseAllowlist('123|456|789');
     expect(result.ids).toEqual(new Set([123, 456, 789]));
     expect(result.names?.size).toBe(0);
   });
 
   it('parses string names correctly', () => {
-    const result = parseAllowlist('Project Alpha,Project Beta');
+    const result = parseAllowlist('Project Alpha|Project Beta');
     expect(result.ids?.size).toBe(0);
     expect(result.names).toEqual(new Set(['project alpha', 'project beta']));
   });
 
   it('parses mixed IDs and names correctly', () => {
-    const result = parseAllowlist('123,Project Alpha,456');
+    const result = parseAllowlist('123|Project Alpha|456');
     expect(result.ids).toEqual(new Set([123, 456]));
     expect(result.names).toEqual(new Set(['project alpha']));
   });
 
   it('handles whitespace around items', () => {
-    const result = parseAllowlist('  123  ,  Project Alpha  ');
+    const result = parseAllowlist('  123  |  Project Alpha  ');
     expect(result.ids).toEqual(new Set([123]));
     expect(result.names).toEqual(new Set(['project alpha']));
   });
 
   it('handles empty items in list', () => {
-    const result = parseAllowlist('123,,456,');
+    const result = parseAllowlist('123||456|');
     expect(result.ids).toEqual(new Set([123, 456]));
+  });
+
+  it('handles names containing commas', () => {
+    const result = parseAllowlist('Project Alpha, Beta|Other Board');
+    expect(result.names).toEqual(new Set(['project alpha, beta', 'other board']));
   });
 });
 
@@ -271,18 +276,23 @@ describe('parseIssueTypesAllowlist', () => {
   });
 
   it('parses issue types correctly (lowercase)', () => {
-    const result = parseIssueTypesAllowlist('Bug,Task,Story');
+    const result = parseIssueTypesAllowlist('Bug|Task|Story');
     expect(result).toEqual(new Set(['bug', 'task', 'story']));
   });
 
   it('handles whitespace around items', () => {
-    const result = parseIssueTypesAllowlist('  Bug  ,  Task  ');
+    const result = parseIssueTypesAllowlist('  Bug  |  Task  ');
     expect(result).toEqual(new Set(['bug', 'task']));
   });
 
   it('handles empty items in list', () => {
-    const result = parseIssueTypesAllowlist('Bug,,Task,');
+    const result = parseIssueTypesAllowlist('Bug||Task|');
     expect(result).toEqual(new Set(['bug', 'task']));
+  });
+
+  it('handles types containing commas', () => {
+    const result = parseIssueTypesAllowlist('Bug, Critical|Task');
+    expect(result).toEqual(new Set(['bug, critical', 'task']));
   });
 });
 

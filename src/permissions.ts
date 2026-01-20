@@ -88,7 +88,7 @@ export interface Allowlist {
  * Parse an allowlist environment variable that can contain IDs or names.
  * Returns null sets if the allowlist is not configured (meaning all allowed).
  *
- * @param envValue - Comma-separated list of IDs or names
+ * @param envValue - Pipe-separated list of IDs or names (e.g., "123|Board Name|456")
  * @returns Allowlist with separate sets for numeric IDs and string names
  */
 export function parseAllowlist(envValue: string | undefined): Allowlist {
@@ -99,7 +99,7 @@ export function parseAllowlist(envValue: string | undefined): Allowlist {
   const ids = new Set<number>();
   const names = new Set<string>();
 
-  const items = envValue.split(',').map(s => s.trim()).filter(s => s !== '');
+  const items = envValue.split('|').map(s => s.trim()).filter(s => s !== '');
 
   for (const item of items) {
     const asNumber = parseInt(item, 10);
@@ -147,7 +147,7 @@ export function isBoardAllowed(
  * Parse the issue types allowlist environment variable.
  * Returns null if not configured (meaning all types allowed).
  *
- * @param envValue - Comma-separated list of issue type names
+ * @param envValue - Pipe-separated list of issue type names (e.g., "Bug|Task|Story")
  * @returns Set of lowercase issue type names, or null if all allowed
  */
 export function parseIssueTypesAllowlist(envValue: string | undefined): Set<string> | null {
@@ -156,7 +156,7 @@ export function parseIssueTypesAllowlist(envValue: string | undefined): Set<stri
   }
 
   const types = new Set<string>();
-  const items = envValue.split(',').map(s => s.trim()).filter(s => s !== '');
+  const items = envValue.split('|').map(s => s.trim()).filter(s => s !== '');
 
   for (const item of items) {
     types.add(item.toLowerCase());
