@@ -65,7 +65,11 @@ Add to your MCP client configuration (e.g., Claude Desktop `claude_desktop_confi
 {
   "mcpServers": {
     "jira": {
-      "command": "jira-mcp-server",
+      "command": "npx",
+      "args": [
+         "-y",
+         "@suppleaardvark/jira-mcp-server"
+      ],
       "env": {
         "JIRA_BASE_URL": "https://your-domain.atlassian.net",
         "JIRA_EMAIL": "your-email@example.com",
