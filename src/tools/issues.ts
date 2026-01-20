@@ -415,6 +415,7 @@ export async function getBacklogStats(
   issueTypeAllowlist: Set<string> | null
 ): Promise<{
   total: number;
+  analyzed: number;
   byStatus: Record<string, number>;
   byType: Record<string, number>;
   byPriority: Record<string, number>;
@@ -422,44 +423,66 @@ export async function getBacklogStats(
 }> {
   const client = getJiraClient();
 
-  // Fetch issues with minimal fields for aggregation
-  // Use a high limit to get good stats in one call
-  const response = await client.searchIssues(jql, 0, 1000, [
-    'status',
-    'issuetype',
-    'priority',
-    'assignee',
-  ]);
-
-  // Filter by allowlists
-  const filteredIssues = response.issues.filter((issue) => {
-    const projectKey = getProjectFromIssueKey(issue.key);
-    return isProjectAllowed(projectKey, projectAllowlist) &&
-      isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist);
-  });
-
-  // Aggregate counts
+  // Aggregate counts across multiple pages
   const byStatus: Record<string, number> = {};
   const byType: Record<string, number> = {};
   const byPriority: Record<string, number> = {};
   const byAssignee: Record<string, number> = {};
 
-  for (const issue of filteredIssues) {
-    const status = issue.fields.status.name;
-    byStatus[status] = (byStatus[status] || 0) + 1;
+  let startAt = 0;
+  const pageSize = 100;
+  let totalFromJira = 0;
+  let analyzed = 0;
 
-    const type = issue.fields.issuetype.name;
-    byType[type] = (byType[type] || 0) + 1;
+  // Fetch up to 1000 issues across multiple pages
+  while (startAt < 1000) {
+    const response = await client.searchIssues(jql, startAt, pageSize, [
+      'status',
+      'issuetype',
+      'priority',
+      'assignee',
+    ]);
 
-    const priority = issue.fields.priority?.name || 'None';
-    byPriority[priority] = (byPriority[priority] || 0) + 1;
+    totalFromJira = response.total;
 
-    const assignee = issue.fields.assignee?.displayName || 'Unassigned';
-    byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
+    if (response.issues.length === 0) {
+      break;
+    }
+
+    // Filter and aggregate
+    for (const issue of response.issues) {
+      const projectKey = getProjectFromIssueKey(issue.key);
+      if (!isProjectAllowed(projectKey, projectAllowlist) ||
+          !isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)) {
+        continue;
+      }
+
+      analyzed++;
+
+      const status = issue.fields.status.name;
+      byStatus[status] = (byStatus[status] || 0) + 1;
+
+      const type = issue.fields.issuetype.name;
+      byType[type] = (byType[type] || 0) + 1;
+
+      const priority = issue.fields.priority?.name || 'None';
+      byPriority[priority] = (byPriority[priority] || 0) + 1;
+
+      const assignee = issue.fields.assignee?.displayName || 'Unassigned';
+      byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
+    }
+
+    startAt += response.issues.length;
+
+    // Stop if we've fetched all issues
+    if (startAt >= totalFromJira) {
+      break;
+    }
   }
 
   return {
-    total: filteredIssues.length,
+    total: totalFromJira,
+    analyzed,
     byStatus,
     byType,
     byPriority,
