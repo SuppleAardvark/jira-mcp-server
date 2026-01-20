@@ -13,6 +13,7 @@ import type {
   JiraTransitionsResponse,
   JiraComment,
   CreateIssueResponse,
+  JiraChangelogResponse,
 } from './types.js';
 
 interface JiraConfig {
@@ -190,6 +191,16 @@ export class JiraClient {
   ): Promise<JiraCommentsResponse> {
     return this.request<JiraCommentsResponse>(
       `/rest/api/3/issue/${issueKey}/comment?startAt=${startAt}&maxResults=${maxResults}`
+    );
+  }
+
+  async getIssueChangelog(
+    issueKey: string,
+    startAt = 0,
+    maxResults = 100
+  ): Promise<JiraChangelogResponse> {
+    return this.request<JiraChangelogResponse>(
+      `/rest/api/3/issue/${issueKey}/changelog?startAt=${startAt}&maxResults=${maxResults}`
     );
   }
 

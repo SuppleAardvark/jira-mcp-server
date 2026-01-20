@@ -16,6 +16,7 @@ import {
   transitionIssue,
   addComment,
   createIssue,
+  getIssueHistory,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
 import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist, parseProjectAllowlist } from './permissions.js';
@@ -197,6 +198,24 @@ const allTools = [
           issueKey: {
             type: 'string',
             description: 'The issue key (e.g., PROJ-123)',
+          },
+        },
+        required: ['issueKey'],
+      },
+    },
+    {
+      name: 'jira_get_issue_history',
+      description: 'Get the changelog/history of a JIRA issue. Returns all field changes, status transitions, and other modifications.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          issueKey: {
+            type: 'string',
+            description: 'The issue key (e.g., PROJ-123)',
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of history entries to return (default: 100)',
           },
         },
         required: ['issueKey'],
@@ -471,6 +490,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('issueKey is required');
         }
         const result = await getTransitions(issueKey, issueTypeAllowlist, projectAllowlist);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'jira_get_issue_history': {
+        const issueKey = args?.issueKey as string;
+        const maxResults = (args?.maxResults as number) || 100;
+        if (!issueKey) {
+          throw new Error('issueKey is required');
+        }
+        const result = await getIssueHistory(issueKey, maxResults, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

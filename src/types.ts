@@ -274,3 +274,40 @@ export interface CreateIssueResponse {
   key: string;
   self: string;
 }
+
+// Changelog types
+export interface JiraChangelogItem {
+  field: string;
+  fieldtype: string;
+  fieldId?: string;
+  from: string | null;
+  fromString: string | null;
+  to: string | null;
+  toString: string | null;
+}
+
+export interface JiraChangelogEntry {
+  id: string;
+  author: JiraUser;
+  created: string;
+  items: JiraChangelogItem[];
+}
+
+export interface JiraChangelogResponse {
+  startAt: number;
+  maxResults: number;
+  total: number;
+  isLast: boolean;
+  values: JiraChangelogEntry[];
+}
+
+export interface HistoryEntry {
+  id: string;
+  author: string;
+  created: string;
+  changes: Array<{
+    field: string;
+    from: string | null;
+    to: string | null;
+  }>;
+}

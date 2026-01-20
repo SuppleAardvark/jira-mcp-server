@@ -5,6 +5,7 @@ import type {
   JiraDocument,
   JiraDocumentNode,
   CreateIssueResult,
+  HistoryEntry,
 } from '../types.js';
 import { isIssueTypeAllowed, isProjectAllowed, getProjectFromIssueKey } from '../permissions.js';
 
@@ -405,5 +406,37 @@ export async function createIssue(
     key: result.key,
     id: result.id,
     self: result.self,
+  };
+}
+
+export async function getIssueHistory(
+  issueKey: string,
+  maxResults = 100,
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
+): Promise<{
+  issueKey: string;
+  history: HistoryEntry[];
+  total: number;
+}> {
+  // Verify issue project and type are allowed
+  await verifyIssueAllowed(issueKey, issueTypeAllowlist, projectAllowlist);
+
+  const client = getJiraClient();
+  const response = await client.getIssueChangelog(issueKey, 0, maxResults);
+
+  return {
+    issueKey,
+    history: response.values.map((entry) => ({
+      id: entry.id,
+      author: entry.author.displayName,
+      created: entry.created,
+      changes: entry.items.map((item) => ({
+        field: item.field,
+        from: item.fromString,
+        to: item.toString,
+      })),
+    })),
+    total: response.total,
   };
 }
