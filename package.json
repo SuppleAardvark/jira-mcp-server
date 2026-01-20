@@ -1,19 +1,48 @@
 {
-  "name": "@SuppleAardvark/jira-mcp-server",
+  "name": "@suppleaardvark/jira-mcp-server",
   "version": "1.0.0",
   "description": "MCP server for JIRA integration",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "jira-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "mcp",
+    "jira",
+    "atlassian",
+    "model-context-protocol",
+    "claude",
+    "ai"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suppleaardvark/jira-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/suppleaardvark/jira-mcp-server/issues"
+  },
+  "homepage": "https://github.com/suppleaardvark/jira-mcp-server#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.17"
   }
 }

@@ -9,6 +9,8 @@ npm install          # Install dependencies
 npm run build        # Compile TypeScript to dist/
 npm run dev          # Watch mode for development
 npm start            # Run the compiled server
+npm test             # Run tests
+npm run test:watch   # Run tests in watch mode
 ```
 
 ## Environment Variables

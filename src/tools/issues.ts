@@ -8,7 +8,7 @@ import type {
 } from '../types.js';
 
 // Convert Atlassian Document Format to plain text
-function adfToText(doc: JiraDocument | string | undefined): string {
+export function adfToText(doc: JiraDocument | string | undefined): string {
   if (!doc) return '';
   if (typeof doc === 'string') return doc;
 
@@ -28,7 +28,7 @@ function adfToText(doc: JiraDocument | string | undefined): string {
 
 // Extract parent epic from issue fields
 // Handles both next-gen (fields.parent) and classic (customfield_* epic link) projects
-function extractParent(fields: Record<string, unknown>): IssueDetails['parent'] | undefined {
+export function extractParent(fields: Record<string, unknown>): IssueDetails['parent'] | undefined {
   // Next-gen/team-managed projects use fields.parent
   if (fields.parent && typeof fields.parent === 'object') {
     const parent = fields.parent as {

@@ -2,6 +2,23 @@
 
 An MCP (Model Context Protocol) server that provides Claude with tools to interact with JIRA for sprint management, issue tracking, and attachment handling.
 
+## Installation
+
+### Option 1: Install from npm
+
+```bash
+npm install -g @suppleaardvark/jira-mcp-server
+```
+
+### Option 2: Build from source
+
+```bash
+git clone https://github.com/suppleaardvark/jira-mcp-server.git
+cd jira-mcp-server
+npm install
+npm run build
+```
+
 ## Setup
 
 ### 1. Get JIRA API Credentials
@@ -12,7 +29,7 @@ An MCP (Model Context Protocol) server that provides Claude with tools to intera
 
 ### 2. Configure Environment Variables
 
-Set the following environment variables:
+**Required:**
 
 ```bash
 export JIRA_BASE_URL="https://your-domain.atlassian.net"
@@ -20,28 +37,66 @@ export JIRA_EMAIL="your-email@example.com"
 export JIRA_API_TOKEN="your-api-token"
 ```
 
-### 3. Build the Server
+**Optional:**
 
 ```bash
-cd mcp-servers/jira-mcp
-npm install
-npm run build
+# Restrict which tools are available (comma-separated scopes)
+export JIRA_SCOPES="boards:read,sprints:read,issues:read"
 ```
 
-### 4. Configure MCP Client
+See [Permission Scopes](#permission-scopes) for details.
+
+### 3. Configure MCP Client
 
 Add to your MCP client configuration (e.g., Claude Desktop `claude_desktop_config.json`):
+
+**If installed from npm:**
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "jira-mcp-server",
+      "env": {
+        "JIRA_BASE_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "your-email@example.com",
+        "JIRA_API_TOKEN": "your-api-token"
+      }
+    }
+  }
+}
+```
+
+**If built from source:**
 
 ```json
 {
   "mcpServers": {
     "jira": {
       "command": "node",
-      "args": ["/path/to/mcp-servers/jira-mcp/dist/index.js"],
+      "args": ["/path/to/jira-mcp-server/dist/index.js"],
       "env": {
         "JIRA_BASE_URL": "https://your-domain.atlassian.net",
         "JIRA_EMAIL": "your-email@example.com",
         "JIRA_API_TOKEN": "your-api-token"
+      }
+    }
+  }
+}
+```
+
+**With restricted scopes (read-only example):**
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "jira-mcp-server",
+      "env": {
+        "JIRA_BASE_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "your-email@example.com",
+        "JIRA_API_TOKEN": "your-api-token",
+        "JIRA_SCOPES": "boards:read,sprints:read,issues:read,comments:read,attachments:read"
       }
     }
   }
@@ -75,6 +130,15 @@ Get all issues in a sprint.
 - `maxResults` (number, optional) - Maximum issues to return (default: 50)
 
 **Returns:** Issues with keys, summaries, statuses, and assignees.
+
+#### `jira_get_my_sprint_issues`
+Get issues assigned to the current user in a sprint.
+
+**Parameters:**
+- `sprintId` (number, required) - The sprint ID
+- `maxResults` (number, optional) - Maximum issues to return (default: 200)
+
+**Returns:** Issues assigned to you, sorted by status then priority.
 
 ### Issue Tools
 
@@ -175,6 +239,55 @@ Download an attachment to a local file.
 **Parameters:**
 - `attachmentId` (string, required) - Attachment ID (from `jira_list_attachments`)
 - `outputPath` (string, required) - Local file path to save the attachment
+
+#### `jira_upload_attachment`
+Upload a file as an attachment to an issue.
+
+**Parameters:**
+- `issueKey` (string, required) - The issue key (e.g., "PROJ-123")
+- `filePath` (string, required) - Local file path to upload
+
+**Returns:** Uploaded attachment details including ID, filename, size, and MIME type.
+
+## Permission Scopes
+
+Use the `JIRA_SCOPES` environment variable to restrict which tools are available. This is useful for limiting access in shared environments or enforcing least-privilege access.
+
+Tools outside the configured scopes are completely hidden from the agent—they won't appear in the tool list and the agent won't know they exist.
+
+**Default behavior:** If `JIRA_SCOPES` is not set or empty, all tools are enabled.
+
+### Available Scopes
+
+| Scope | Tools |
+|-------|-------|
+| `boards:read` | `jira_list_boards` |
+| `sprints:read` | `jira_get_active_sprint`, `jira_get_sprint_issues`, `jira_get_my_sprint_issues` |
+| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions` |
+| `issues:write` | `jira_create_issue`, `jira_update_issue`, `jira_transition_issue` |
+| `comments:read` | `jira_get_issue_comments` |
+| `comments:write` | `jira_add_comment` |
+| `attachments:read` | `jira_list_attachments`, `jira_download_attachment` |
+| `attachments:write` | `jira_upload_attachment` |
+
+### Examples
+
+**Read-only access:**
+```bash
+JIRA_SCOPES="boards:read,sprints:read,issues:read,comments:read,attachments:read"
+```
+
+**Issues only (read and write):**
+```bash
+JIRA_SCOPES="issues:read,issues:write"
+```
+
+**Full access (explicit):**
+```bash
+JIRA_SCOPES="boards:read,sprints:read,issues:read,issues:write,comments:read,comments:write,attachments:read,attachments:write"
+```
+
+Invalid scope names are logged as warnings and ignored.
 
 ## Example Usage
 

@@ -347,10 +347,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
-  // Check if tool is allowed by permission scopes
+  // Check if tool is allowed by permission scopes (returns same error as unknown tool)
   if (!isToolAllowed(name, allowedTools)) {
     return {
-      content: [{ type: 'text', text: `Error: Tool "${name}" is not allowed by current permission scopes` }],
+      content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }],
       isError: true,
     };
   }
