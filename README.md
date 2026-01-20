@@ -161,7 +161,7 @@ Get detailed information about an issue.
 **Parameters:**
 - `issueKey` (string, required) - The issue key (e.g., "PROJ-123")
 
-**Returns:** Full issue details including summary, description, status, assignee, labels, components, and parent info.
+**Returns:** Full issue details including summary, description, status, assignee, labels, components, parent info, and custom fields (with human-readable field names).
 
 #### `jira_search_issues`
 Search for issues using JQL.
@@ -170,12 +170,27 @@ Search for issues using JQL.
 - `jql` (string, required) - JQL query string
 - `maxResults` (number, optional) - Maximum results (default: 50)
 
+**Returns:** Issues with keys, summaries, statuses, assignees, and types. Also includes `hasMore` flag indicating if additional results exist beyond `maxResults`.
+
 **Important:** Queries must be bounded with a project filter or other restriction (e.g., assignee, sprint). Unbounded queries like `status = "Open"` are rejected by JIRA's API.
 
 **Example JQL queries:**
 - `project = PROJ AND status = "In Progress"`
 - `assignee = currentUser() AND sprint in openSprints()`
 - `project = PROJ AND labels = bug AND created >= -7d`
+
+#### `jira_get_backlog_stats`
+Get aggregated statistics for issues matching a JQL query without fetching all issue details.
+
+**Parameters:**
+- `jql` (string, required) - JQL query string (e.g., "project = PROJ")
+- `boardId` (number, optional) - Filter by board ID (adds project filter based on board's project)
+- `excludeResolved` (boolean, optional) - Exclude resolved issues (adds "resolution IS EMPTY")
+- `issueTypes` (string[], optional) - Filter by issue types (e.g., ["Bug", "Story"])
+- `assignees` (string[], optional) - Filter by assignees (use "unassigned" for unassigned issues)
+- `sprint` (number, optional) - Filter by sprint ID
+
+**Returns:** Counts grouped by status, type, priority, assignee, and a `byTypeAndStatus` pivot table. Analyzes up to 4000 issues.
 
 #### `jira_get_issue_comments`
 Get comments on an issue.
@@ -212,6 +227,7 @@ Update fields on an existing issue.
 - `assignee` (string, optional) - Atlassian account ID (null to unassign)
 - `priority` (string, optional) - Priority name
 - `labels` (string[], optional) - Labels to set
+- `customFields` (object, optional) - Custom fields to update. Keys are field IDs (e.g., "customfield_10001") and values depend on field type.
 
 #### `jira_get_transitions`
 Get available status transitions for an issue.
@@ -235,6 +251,15 @@ Add a comment to an issue.
 **Parameters:**
 - `issueKey` (string, required) - The issue key
 - `body` (string, required) - Comment text
+
+#### `jira_get_issue_history`
+Get the changelog/history of an issue showing all field changes.
+
+**Parameters:**
+- `issueKey` (string, required) - The issue key
+- `maxResults` (number, optional) - Maximum history entries (default: 100)
+
+**Returns:** History entries with author, timestamp, and field changes (from/to values).
 
 ### Attachment Tools
 
@@ -276,7 +301,7 @@ Tools outside the configured scopes are completely hidden from the agent—they 
 |-------|-------|
 | `boards:read` | `jira_list_boards` |
 | `sprints:read` | `jira_get_active_sprint`, `jira_get_sprint_issues`, `jira_get_my_sprint_issues` |
-| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions` |
+| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions`, `jira_get_issue_history`, `jira_get_backlog_stats` |
 | `issues:write` | `jira_create_issue`, `jira_update_issue`, `jira_transition_issue` |
 | `comments:read` | `jira_get_issue_comments` |
 | `comments:write` | `jira_add_comment` |
