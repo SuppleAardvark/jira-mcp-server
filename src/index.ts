@@ -147,6 +147,10 @@ const allTools = [
             type: 'string',
             description: 'JQL query string (e.g., "project = PROJ")',
           },
+          boardId: {
+            type: 'number',
+            description: 'Filter by board ID (adds project filter based on board\'s project)',
+          },
           excludeResolved: {
             type: 'boolean',
             description: 'Exclude resolved/done issues (adds "resolution IS EMPTY" to JQL)',
@@ -189,7 +193,7 @@ const allTools = [
     },
     {
       name: 'jira_update_issue',
-      description: 'Update fields on a JIRA issue. Can update summary, description, assignee, priority, and labels.',
+      description: 'Update fields on a JIRA issue. Can update summary, description, assignee, priority, labels, and custom fields.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -217,6 +221,11 @@ const allTools = [
             type: 'array',
             items: { type: 'string' },
             description: 'Array of labels to set on the issue',
+          },
+          customFields: {
+            type: 'object',
+            description: 'Custom fields to update. Keys are field IDs (e.g., "customfield_10001") and values depend on field type.',
+            additionalProperties: true,
           },
         },
         required: ['issueKey'],
@@ -491,6 +500,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           issueTypes: args?.issueTypes as string[] | undefined,
           assignees: args?.assignees as string[] | undefined,
           sprint: args?.sprint as number | undefined,
+          boardId: args?.boardId as number | undefined,
         };
         const result = await getBacklogStats(jql, options, projectAllowlist, issueTypeAllowlist);
         return {
@@ -521,12 +531,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           assignee?: string;
           priority?: string;
           labels?: string[];
+          customFields?: Record<string, unknown>;
         } = {};
         if (args?.summary !== undefined) updates.summary = args.summary as string;
         if (args?.description !== undefined) updates.description = args.description as string;
         if (args?.assignee !== undefined) updates.assignee = args.assignee as string;
         if (args?.priority !== undefined) updates.priority = args.priority as string;
         if (args?.labels !== undefined) updates.labels = args.labels as string[];
+        if (args?.customFields !== undefined) updates.customFields = args.customFields as Record<string, unknown>;
 
         const result = await updateIssue(issueKey, updates, issueTypeAllowlist, projectAllowlist);
         return {

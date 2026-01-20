@@ -170,18 +170,25 @@ export class JiraClient {
     jql: string,
     startAt = 0,
     maxResults = 50,
-    fields?: string[]
+    fields?: string[],
+    nextPageToken?: string
   ): Promise<JiraSearchResponse> {
-    const params = new URLSearchParams({
+    const body: Record<string, unknown> = {
       jql,
-      startAt: startAt.toString(),
-      maxResults: maxResults.toString(),
-    });
+      maxResults,
+    };
     if (fields && fields.length > 0) {
-      params.set('fields', fields.join(','));
+      body.fields = fields;
+    }
+    if (nextPageToken) {
+      body.nextPageToken = nextPageToken;
     }
 
-    return this.request<JiraSearchResponse>(`/rest/api/3/search/jql?${params.toString()}`);
+    // Use POST for the new /search/jql endpoint (startAt is ignored, use nextPageToken)
+    return this.request<JiraSearchResponse>('/rest/api/3/search/jql', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   }
 
   async getIssueComments(

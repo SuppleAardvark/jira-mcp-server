@@ -97,6 +97,74 @@ export function extractParent(fields: Record<string, unknown>): IssueDetails['pa
   return undefined;
 }
 
+/**
+ * Extract a readable value from a custom field.
+ */
+function extractCustomFieldValue(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  // Handle arrays (e.g., multi-select fields)
+  if (Array.isArray(value)) {
+    return value.map(v => extractCustomFieldValue(v));
+  }
+
+  // Handle objects with common JIRA patterns
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+
+    // User objects
+    if ('displayName' in obj) {
+      return obj.displayName;
+    }
+
+    // Option/select fields
+    if ('value' in obj && typeof obj.value === 'string') {
+      return obj.value;
+    }
+
+    // Status-like objects
+    if ('name' in obj && typeof obj.name === 'string') {
+      return obj.name;
+    }
+
+    // Sprint objects
+    if ('name' in obj && 'state' in obj) {
+      return { name: obj.name, state: obj.state };
+    }
+
+    // ADF content - convert to text
+    if ('type' in obj && obj.type === 'doc' && 'content' in obj) {
+      return adfToText(obj as unknown as JiraDocument);
+    }
+
+    // Issue link references
+    if ('key' in obj && 'fields' in obj) {
+      const fields = obj.fields as Record<string, unknown>;
+      return {
+        key: obj.key,
+        summary: fields.summary,
+      };
+    }
+
+    // Return simple objects as-is, complex ones get stringified summary
+    const keys = Object.keys(obj);
+    if (keys.length <= 3) {
+      return obj;
+    }
+    // For complex objects, try to extract meaningful data
+    if ('self' in obj && keys.length > 3) {
+      const { self, ...rest } = obj;
+      return rest;
+    }
+    return obj;
+  }
+
+  // Primitives (string, number, boolean)
+  return value;
+}
+
 export async function getIssue(
   issueKey: string,
   issueTypeAllowlist: Set<string> | null,
@@ -109,7 +177,7 @@ export async function getIssue(
   }
 
   const client = getJiraClient();
-  const issue = await client.getIssue(issueKey, ['renderedFields']);
+  const issue = await client.getIssue(issueKey, ['renderedFields', 'names']);
 
   // Check if issue type is allowed
   if (!isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)) {
@@ -117,6 +185,21 @@ export async function getIssue(
   }
 
   const parent = extractParent(issue.fields as unknown as Record<string, unknown>);
+
+  // Extract custom fields
+  const customFields: Record<string, unknown> = {};
+  const fieldNames = (issue as unknown as { names?: Record<string, string> }).names || {};
+  const fields = issue.fields as unknown as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (key.startsWith('customfield_') && value !== null) {
+      const fieldName = fieldNames[key] || key;
+      const extractedValue = extractCustomFieldValue(value);
+      if (extractedValue !== null) {
+        customFields[fieldName] = extractedValue;
+      }
+    }
+  }
 
   return {
     key: issue.key,
@@ -135,6 +218,7 @@ export async function getIssue(
     attachmentCount: issue.fields.attachment?.length ?? 0,
     commentCount: issue.fields.comment?.total ?? 0,
     parent,
+    customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
   };
 }
 
@@ -154,18 +238,44 @@ export async function searchIssues(
     parent?: { key: string; summary: string };
   }>;
   total: number;
+  hasMore: boolean;
 }> {
   const client = getJiraClient();
-  const response = await client.searchIssues(jql, 0, maxResults, [
+
+  // Collect issues across multiple pages if needed (max 100 per page)
+  const allIssues: typeof response.issues = [];
+  let nextPageToken: string | undefined;
+  let hasMore = false;
+  const pageSize = Math.min(maxResults, 100);
+
+  let response = await client.searchIssues(jql, 0, pageSize, [
     'summary',
     'status',
     'assignee',
     'issuetype',
     'parent',
   ]);
+  allIssues.push(...response.issues);
+
+  // Fetch additional pages if needed and available
+  while (allIssues.length < maxResults && response.nextPageToken && !response.isLast) {
+    nextPageToken = response.nextPageToken;
+    const remaining = maxResults - allIssues.length;
+    response = await client.searchIssues(jql, 0, Math.min(remaining, 100), [
+      'summary',
+      'status',
+      'assignee',
+      'issuetype',
+      'parent',
+    ], nextPageToken);
+    allIssues.push(...response.issues);
+  }
+
+  // Check if there are more results beyond what we fetched
+  hasMore = !response.isLast && !!response.nextPageToken;
 
   // Filter results by allowed projects and issue types
-  const filteredIssues = response.issues.filter((issue) => {
+  const filteredIssues = allIssues.filter((issue) => {
     const projectKey = getProjectFromIssueKey(issue.key);
     return isProjectAllowed(projectKey, projectAllowlist) &&
       isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist);
@@ -185,6 +295,7 @@ export async function searchIssues(
       };
     }),
     total: filteredIssues.length,
+    hasMore,
   };
 }
 
@@ -224,6 +335,7 @@ export async function updateIssue(
     assignee?: string; // accountId
     priority?: string; // priority name or id
     labels?: string[];
+    customFields?: Record<string, unknown>; // customfield_XXXXX or field name -> value
   },
   issueTypeAllowlist: Set<string> | null,
   projectAllowlist: Set<string> | null
@@ -263,6 +375,13 @@ export async function updateIssue(
 
   if (updates.labels !== undefined) {
     fields.labels = updates.labels;
+  }
+
+  // Add custom fields - pass through as-is (user provides customfield_XXXXX keys)
+  if (updates.customFields) {
+    for (const [key, value] of Object.entries(updates.customFields)) {
+      fields[key] = value;
+    }
   }
 
   await client.updateIssue(issueKey, fields);
@@ -416,6 +535,7 @@ export async function getBacklogStats(
     issueTypes?: string[];
     assignees?: string[];
     sprint?: number;
+    boardId?: number;
   },
   projectAllowlist: Set<string> | null,
   issueTypeAllowlist: Set<string> | null
@@ -426,30 +546,60 @@ export async function getBacklogStats(
   byType: Record<string, number>;
   byPriority: Record<string, number>;
   byAssignee: Record<string, number>;
+  byTypeAndStatus: Record<string, Record<string, number>>;
 }> {
   const client = getJiraClient();
 
-  // Build JQL with filters
-  let finalJql = jql;
+  // Extract ORDER BY clause if present (case-insensitive)
+  // Handle both "... ORDER BY ..." and JQL that starts with "ORDER BY ..."
+  const orderByMatch = jql.match(/^(.*?)\s*(ORDER\s+BY\s+.*)$/i);
+  let baseJql = orderByMatch ? orderByMatch[1].trim() : jql;
+  const orderByClause = orderByMatch ? orderByMatch[2] : '';
+
+  // Build filter conditions
+  const filters: string[] = [];
+
+  // If boardId is provided, fetch the board to get its project
+  if (options.boardId) {
+    const board = await client.getBoard(options.boardId);
+    if (board.location?.projectKey) {
+      filters.push(`project = "${board.location.projectKey}"`);
+    }
+  }
 
   if (options.excludeResolved) {
-    finalJql += ' AND resolution IS EMPTY';
+    filters.push('resolution IS EMPTY');
   }
 
   if (options.issueTypes && options.issueTypes.length > 0) {
     const types = options.issueTypes.map(t => `"${t}"`).join(', ');
-    finalJql += ` AND issuetype IN (${types})`;
+    filters.push(`issuetype IN (${types})`);
   }
 
   if (options.assignees && options.assignees.length > 0) {
     const assigneeFilters = options.assignees.map(a =>
       a.toLowerCase() === 'unassigned' ? 'assignee IS EMPTY' : `assignee = "${a}"`
     );
-    finalJql += ` AND (${assigneeFilters.join(' OR ')})`;
+    filters.push(`(${assigneeFilters.join(' OR ')})`);
   }
 
   if (options.sprint) {
-    finalJql += ` AND sprint = ${options.sprint}`;
+    filters.push(`sprint = ${options.sprint}`);
+  }
+
+  // Combine base JQL with filters
+  let finalJql = baseJql.trim();
+  if (filters.length > 0) {
+    if (finalJql) {
+      finalJql += ' AND ' + filters.join(' AND ');
+    } else {
+      finalJql = filters.join(' AND ');
+    }
+  }
+
+  // Re-add ORDER BY clause if present
+  if (orderByClause) {
+    finalJql += ' ' + orderByClause;
   }
 
   // Aggregate counts across multiple pages
@@ -457,22 +607,25 @@ export async function getBacklogStats(
   const byType: Record<string, number> = {};
   const byPriority: Record<string, number> = {};
   const byAssignee: Record<string, number> = {};
+  const byTypeAndStatus: Record<string, Record<string, number>> = {};
 
-  let startAt = 0;
   const pageSize = 100;
   let totalFromJira = 0;
   let analyzed = 0;
+  let pageCount = 0;
+  let nextPageToken: string | undefined;
 
-  // Fetch up to 4000 issues across multiple pages
-  while (startAt < 4000) {
-    const response = await client.searchIssues(finalJql, startAt, pageSize, [
+  // Fetch up to 4000 issues across multiple pages using token-based pagination
+  while (pageCount < 40) { // 40 pages * 100 = 4000 max
+    const response = await client.searchIssues(finalJql, 0, pageSize, [
       'status',
       'issuetype',
       'priority',
       'assignee',
-    ]);
-
-    totalFromJira = response.total;
+    ], nextPageToken);
+    if (response.total !== undefined) {
+      totalFromJira = response.total;
+    }
 
     if (response.issues.length === 0) {
       break;
@@ -494,6 +647,12 @@ export async function getBacklogStats(
       const type = issue.fields.issuetype.name;
       byType[type] = (byType[type] || 0) + 1;
 
+      // Pivot: Type -> Status
+      if (!byTypeAndStatus[type]) {
+        byTypeAndStatus[type] = {};
+      }
+      byTypeAndStatus[type][status] = (byTypeAndStatus[type][status] || 0) + 1;
+
       const priority = issue.fields.priority?.name || 'None';
       byPriority[priority] = (byPriority[priority] || 0) + 1;
 
@@ -501,21 +660,23 @@ export async function getBacklogStats(
       byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
     }
 
-    startAt += response.issues.length;
+    pageCount++;
 
-    // Stop if we've fetched all issues
-    if (startAt >= totalFromJira) {
+    // Stop if this is the last page
+    if (response.isLast || !response.nextPageToken) {
       break;
     }
+    nextPageToken = response.nextPageToken;
   }
 
   return {
-    total: totalFromJira,
+    total: totalFromJira || analyzed,
     analyzed,
     byStatus,
     byType,
     byPriority,
     byAssignee,
+    byTypeAndStatus,
   };
 }
 

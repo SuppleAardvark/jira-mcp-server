@@ -124,6 +124,6 @@ export async function getMySprintIssues(
   return {
     sprintId,
     issues,
-    total: response.total,
+    total: response.total ?? issues.length,
   };
 }

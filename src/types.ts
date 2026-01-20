@@ -164,10 +164,13 @@ export interface JiraSprintIssuesResponse {
 
 export interface JiraSearchResponse {
   expand?: string;
-  startAt: number;
+  startAt?: number;
   maxResults: number;
-  total: number;
+  total?: number;
   issues: JiraIssue[];
+  // New pagination fields for /search/jql endpoint
+  nextPageToken?: string;
+  isLast?: boolean;
 }
 
 export interface JiraTransition {
@@ -245,6 +248,8 @@ export interface IssueDetails {
     summary: string;
     type: string;
   };
+  // Custom fields (customfield_* mapped to their names when available)
+  customFields?: Record<string, unknown>;
 }
 
 export interface CommentSummary {
