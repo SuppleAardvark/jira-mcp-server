@@ -751,6 +751,7 @@ export async function getBacklogStats(
     columns: string[];
     data: Record<string, Record<string, number>>;
     totals: { rows: Record<string, number>; columns: Record<string, number>; grand: number };
+    valueFieldName?: string; // Resolved name of the valueField (e.g., "Story Points" instead of "customfield_10001")
   };
 }> {
   const client = getJiraClient();
@@ -868,6 +869,9 @@ export async function getBacklogStats(
   const useDefaultGroups = !options.groupBy;
   const groupByFields = options.groupBy || [];
 
+  // Check if we need custom field name resolution
+  const needsFieldNames = options.pivot?.valueField?.startsWith('customfield_');
+
   // Standard aggregation (when using defaults)
   const byStatus: Record<string, number> = {};
   const byType: Record<string, number> = {};
@@ -887,6 +891,10 @@ export async function getBacklogStats(
   const pivotColTotals: Record<string, { count: number; sum: number }> = {};
   let pivotGrandTotal = { count: 0, sum: 0 };
 
+  // Field names mapping for custom fields
+  let fieldNames: Record<string, string> = {};
+  let resolvedValueFieldName: string | undefined;
+
   const pageSize = 100;
   let totalFromJira = 0;
   let analyzed = 0;
@@ -902,6 +910,15 @@ export async function getBacklogStats(
 
     if (response.issues.length === 0) {
       break;
+    }
+
+    // Fetch field names on first page if needed
+    if (pageCount === 0 && needsFieldNames && response.issues.length > 0) {
+      const sampleIssue = await client.getIssue(response.issues[0].key, ['names']);
+      fieldNames = (sampleIssue as unknown as { names?: Record<string, string> }).names || {};
+      if (options.pivot?.valueField) {
+        resolvedValueFieldName = fieldNames[options.pivot.valueField] || options.pivot.valueField;
+      }
     }
 
     // Filter and aggregate
@@ -1009,6 +1026,7 @@ export async function getBacklogStats(
       columns: string[];
       data: Record<string, Record<string, number>>;
       totals: { rows: Record<string, number>; columns: Record<string, number>; grand: number };
+      valueFieldName?: string;
     };
   } = {
     total: totalFromJira || analyzed,
@@ -1106,6 +1124,7 @@ export async function getBacklogStats(
       columns,
       data,
       totals: { rows: rowTotals, columns: colTotals, grand },
+      ...(resolvedValueFieldName && { valueFieldName: resolvedValueFieldName }),
     };
   }
 
