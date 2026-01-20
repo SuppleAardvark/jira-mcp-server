@@ -120,7 +120,7 @@ const allTools = [
     },
     {
       name: 'jira_search_issues',
-      description: 'Search for issues using JQL (JIRA Query Language). IMPORTANT: Queries must be bounded with a project filter or other restriction (e.g., assignee, sprint) - unbounded queries are rejected by JIRA. Example: "project = PROJ AND status = \\"In Progress\\""',
+      description: 'Search for issues using JQL (JIRA Query Language). Returns up to 50 issues by default. IMPORTANT: Queries must be bounded with a project filter or other restriction (e.g., assignee, sprint) - unbounded queries are rejected by JIRA. Example: "project = PROJ AND status = \\"In Progress\\""',
       inputSchema: {
         type: 'object',
         properties: {
@@ -130,7 +130,7 @@ const allTools = [
           },
           maxResults: {
             type: 'number',
-            description: 'Maximum number of results (default: 50)',
+            description: 'Maximum number of results to return. Defaults to 50 if not specified.',
           },
         },
         required: ['jql'],
