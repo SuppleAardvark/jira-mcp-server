@@ -100,7 +100,7 @@ export function extractParent(fields: Record<string, unknown>): IssueDetails['pa
 /**
  * Extract a readable value from a custom field.
  */
-function extractCustomFieldValue(value: unknown): unknown {
+export function extractCustomFieldValue(value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
   }
@@ -165,16 +165,26 @@ function extractCustomFieldValue(value: unknown): unknown {
   return value;
 }
 
+// Fields that can be requested for getIssue
+export type IssueField = 'key' | 'summary' | 'description' | 'type' | 'status' | 'statusCategory' | 'priority' | 'assignee' | 'reporter' | 'created' | 'updated' | 'labels' | 'components' | 'attachmentCount' | 'commentCount' | 'parent' | 'customFields';
+
+// Default fields for getIssue (all fields)
+const DEFAULT_ISSUE_FIELDS: IssueField[] = ['key', 'summary', 'description', 'type', 'status', 'statusCategory', 'priority', 'assignee', 'reporter', 'created', 'updated', 'labels', 'components', 'attachmentCount', 'commentCount', 'parent', 'customFields'];
+
 export async function getIssue(
   issueKey: string,
   issueTypeAllowlist: Set<string> | null,
-  projectAllowlist: Set<string> | null
+  projectAllowlist: Set<string> | null,
+  requestedFields?: IssueField[]
 ): Promise<IssueDetails> {
   // Check project allowlist first
   const projectKey = getProjectFromIssueKey(issueKey);
   if (!isProjectAllowed(projectKey, projectAllowlist)) {
     throw new Error(`Issue not found: ${issueKey}`);
   }
+
+  const fieldsToReturn = requestedFields ?? DEFAULT_ISSUE_FIELDS;
+  const needsCustomFields = fieldsToReturn.includes('customFields');
 
   const client = getJiraClient();
   const issue = await client.getIssue(issueKey, ['renderedFields', 'names']);
@@ -184,63 +194,132 @@ export async function getIssue(
     throw new Error(`Issue not found: ${issueKey}`);
   }
 
-  const parent = extractParent(issue.fields as unknown as Record<string, unknown>);
-
-  // Extract custom fields
-  const customFields: Record<string, unknown> = {};
-  const fieldNames = (issue as unknown as { names?: Record<string, string> }).names || {};
   const fields = issue.fields as unknown as Record<string, unknown>;
+  const fieldNames = (issue as unknown as { names?: Record<string, string> }).names || {};
 
-  for (const [key, value] of Object.entries(fields)) {
-    if (key.startsWith('customfield_') && value !== null) {
-      const fieldName = fieldNames[key] || key;
-      const extractedValue = extractCustomFieldValue(value);
-      if (extractedValue !== null) {
-        customFields[fieldName] = extractedValue;
+  // Build result based on requested fields
+  const result: IssueDetails = { key: issue.key };
+
+  for (const field of fieldsToReturn) {
+    switch (field) {
+      case 'key':
+        break;
+      case 'summary':
+        result.summary = issue.fields.summary;
+        break;
+      case 'description':
+        result.description = adfToText(issue.fields.description);
+        break;
+      case 'type':
+        result.type = issue.fields.issuetype.name;
+        break;
+      case 'status':
+        result.status = issue.fields.status.name;
+        break;
+      case 'statusCategory':
+        result.statusCategory = issue.fields.status.statusCategory.name;
+        break;
+      case 'priority':
+        result.priority = issue.fields.priority?.name;
+        break;
+      case 'assignee':
+        result.assignee = issue.fields.assignee?.displayName;
+        break;
+      case 'reporter':
+        result.reporter = issue.fields.reporter?.displayName;
+        break;
+      case 'created':
+        result.created = issue.fields.created;
+        break;
+      case 'updated':
+        result.updated = issue.fields.updated;
+        break;
+      case 'labels':
+        result.labels = issue.fields.labels;
+        break;
+      case 'components':
+        result.components = issue.fields.components.map((c) => c.name);
+        break;
+      case 'attachmentCount':
+        result.attachmentCount = issue.fields.attachment?.length ?? 0;
+        break;
+      case 'commentCount':
+        result.commentCount = issue.fields.comment?.total ?? 0;
+        break;
+      case 'parent':
+        result.parent = extractParent(fields);
+        break;
+      case 'customFields': {
+        const customFields: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(fields)) {
+          if (key.startsWith('customfield_') && value !== null) {
+            const fieldName = fieldNames[key] || key;
+            const extractedValue = extractCustomFieldValue(value);
+            if (extractedValue !== null) {
+              customFields[fieldName] = extractedValue;
+            }
+          }
+        }
+        if (Object.keys(customFields).length > 0) {
+          result.customFields = customFields;
+        }
+        break;
       }
     }
   }
 
-  return {
-    key: issue.key,
-    summary: issue.fields.summary,
-    description: adfToText(issue.fields.description),
-    type: issue.fields.issuetype.name,
-    status: issue.fields.status.name,
-    statusCategory: issue.fields.status.statusCategory.name,
-    priority: issue.fields.priority?.name,
-    assignee: issue.fields.assignee?.displayName,
-    reporter: issue.fields.reporter?.displayName,
-    created: issue.fields.created,
-    updated: issue.fields.updated,
-    labels: issue.fields.labels,
-    components: issue.fields.components.map((c) => c.name),
-    attachmentCount: issue.fields.attachment?.length ?? 0,
-    commentCount: issue.fields.comment?.total ?? 0,
-    parent,
-    customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
-  };
+  return result;
+}
+
+// Fields that can be requested for search results
+export type SearchIssueField = 'key' | 'summary' | 'status' | 'statusCategory' | 'assignee' | 'type' | 'parent' | 'priority' | 'description' | 'labels' | 'customFields';
+
+// Default fields for search results
+const DEFAULT_SEARCH_FIELDS: SearchIssueField[] = ['key', 'summary', 'status', 'statusCategory', 'assignee', 'type', 'parent'];
+
+export interface SearchIssueResult {
+  key: string;
+  summary?: string;
+  status?: string;
+  statusCategory?: string;
+  assignee?: string;
+  type?: string;
+  parent?: { key: string; summary: string };
+  priority?: string;
+  description?: string;
+  labels?: string[];
+  customFields?: Record<string, unknown>;
 }
 
 export async function searchIssues(
   jql: string,
   maxResults = 50,
   issueTypeAllowlist: Set<string> | null,
-  projectAllowlist: Set<string> | null
+  projectAllowlist: Set<string> | null,
+  requestedFields?: SearchIssueField[]
 ): Promise<{
-  issues: Array<{
-    key: string;
-    summary: string;
-    status: string;
-    statusCategory: string;
-    assignee?: string;
-    type: string;
-    parent?: { key: string; summary: string };
-  }>;
+  issues: SearchIssueResult[];
   total: number;
   hasMore: boolean;
 }> {
   const client = getJiraClient();
+
+  const fieldsToReturn = requestedFields ?? DEFAULT_SEARCH_FIELDS;
+  const needsCustomFields = fieldsToReturn.includes('customFields');
+  const needsDescription = fieldsToReturn.includes('description');
+  const needsPriority = fieldsToReturn.includes('priority');
+  const needsLabels = fieldsToReturn.includes('labels');
+
+  // Build list of JIRA fields to request
+  const jiraFields = ['summary', 'status', 'assignee', 'issuetype', 'parent'];
+  if (needsDescription) jiraFields.push('description');
+  if (needsPriority) jiraFields.push('priority');
+  if (needsLabels) jiraFields.push('labels');
+  if (needsCustomFields) {
+    // Request all fields when custom fields are needed
+    jiraFields.length = 0;
+    jiraFields.push('*all');
+  }
 
   // Collect issues across multiple pages if needed (max 100 per page)
   const allIssues: typeof response.issues = [];
@@ -248,26 +327,14 @@ export async function searchIssues(
   let hasMore = false;
   const pageSize = Math.min(maxResults, 100);
 
-  let response = await client.searchIssues(jql, 0, pageSize, [
-    'summary',
-    'status',
-    'assignee',
-    'issuetype',
-    'parent',
-  ]);
+  let response = await client.searchIssues(jql, 0, pageSize, jiraFields);
   allIssues.push(...response.issues);
 
   // Fetch additional pages if needed and available
   while (allIssues.length < maxResults && response.nextPageToken && !response.isLast) {
     nextPageToken = response.nextPageToken;
     const remaining = maxResults - allIssues.length;
-    response = await client.searchIssues(jql, 0, Math.min(remaining, 100), [
-      'summary',
-      'status',
-      'assignee',
-      'issuetype',
-      'parent',
-    ], nextPageToken);
+    response = await client.searchIssues(jql, 0, Math.min(remaining, 100), jiraFields, nextPageToken);
     allIssues.push(...response.issues);
   }
 
@@ -281,18 +348,80 @@ export async function searchIssues(
       isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist);
   });
 
+  // Get field names if custom fields are requested
+  let fieldNames: Record<string, string> | undefined;
+  if (needsCustomFields && filteredIssues.length > 0) {
+    const sampleResponse = await client.getIssue(filteredIssues[0].key, ['names']);
+    fieldNames = (sampleResponse as unknown as { names?: Record<string, string> }).names;
+  }
+
   return {
     issues: filteredIssues.map((issue) => {
-      const parent = extractParent(issue.fields as unknown as Record<string, unknown>);
-      return {
-        key: issue.key,
-        summary: issue.fields.summary,
-        status: issue.fields.status.name,
-        statusCategory: issue.fields.status.statusCategory.name,
-        assignee: issue.fields.assignee?.displayName,
-        type: issue.fields.issuetype.name,
-        parent: parent ? { key: parent.key, summary: parent.summary } : undefined,
-      };
+      const result: SearchIssueResult = { key: issue.key };
+      const fields = issue.fields as unknown as Record<string, unknown>;
+      const status = fields.status as { name: string; statusCategory: { name: string } };
+
+      for (const field of fieldsToReturn) {
+        switch (field) {
+          case 'key':
+            break;
+          case 'summary':
+            result.summary = fields.summary as string;
+            break;
+          case 'status':
+            result.status = status.name;
+            break;
+          case 'statusCategory':
+            result.statusCategory = status.statusCategory.name;
+            break;
+          case 'assignee': {
+            const assignee = fields.assignee as { displayName: string } | null;
+            result.assignee = assignee?.displayName;
+            break;
+          }
+          case 'type': {
+            const issuetype = fields.issuetype as { name: string };
+            result.type = issuetype.name;
+            break;
+          }
+          case 'parent': {
+            const parent = extractParent(fields);
+            if (parent) {
+              result.parent = { key: parent.key, summary: parent.summary };
+            }
+            break;
+          }
+          case 'priority': {
+            const priority = fields.priority as { name: string } | null;
+            result.priority = priority?.name;
+            break;
+          }
+          case 'description':
+            result.description = adfToText(fields.description as JiraDocument | string | undefined);
+            break;
+          case 'labels':
+            result.labels = fields.labels as string[];
+            break;
+          case 'customFields': {
+            const customFields: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(fields)) {
+              if (key.startsWith('customfield_') && value !== null) {
+                const fieldName = fieldNames?.[key] || key;
+                const extractedValue = extractCustomFieldValue(value);
+                if (extractedValue !== null) {
+                  customFields[fieldName] = extractedValue;
+                }
+              }
+            }
+            if (Object.keys(customFields).length > 0) {
+              result.customFields = customFields;
+            }
+            break;
+          }
+        }
+      }
+
+      return result;
     }),
     total: filteredIssues.length,
     hasMore,
@@ -528,6 +657,69 @@ export async function createIssue(
   };
 }
 
+// Standard fields that can be used for grouping/pivoting
+export type StatsField = 'status' | 'type' | 'priority' | 'assignee' | 'reporter' | 'labels' | 'components' | 'resolution' | 'project';
+
+// Aggregation actions for pivot tables
+export type AggregationAction = 'count' | 'sum' | 'avg' | 'cardinality';
+
+// Pivot configuration
+export interface PivotConfig {
+  rowField: StatsField;
+  columnField: StatsField;
+  action?: AggregationAction; // default: 'count'
+  valueField?: string; // custom field ID for sum/avg (e.g., story points)
+}
+
+// Field filter configuration
+export interface FieldFilter {
+  field: string;
+  operator: 'eq' | 'in' | 'not' | 'contains' | 'empty' | 'notEmpty';
+  value?: string | string[];
+}
+
+/**
+ * Extract a field value from an issue for stats aggregation.
+ */
+function getFieldValue(issue: { key: string; fields: Record<string, unknown> }, field: StatsField): string | string[] {
+  const fields = issue.fields;
+  switch (field) {
+    case 'status':
+      return (fields.status as { name: string })?.name || 'Unknown';
+    case 'type':
+      return (fields.issuetype as { name: string })?.name || 'Unknown';
+    case 'priority':
+      return (fields.priority as { name: string })?.name || 'None';
+    case 'assignee':
+      return (fields.assignee as { displayName: string })?.displayName || 'Unassigned';
+    case 'reporter':
+      return (fields.reporter as { displayName: string })?.displayName || 'Unknown';
+    case 'labels':
+      return (fields.labels as string[]) || [];
+    case 'components':
+      return (fields.components as { name: string }[])?.map(c => c.name) || [];
+    case 'resolution':
+      return (fields.resolution as { name: string })?.name || 'Unresolved';
+    case 'project':
+      return getProjectFromIssueKey(issue.key);
+    default:
+      return 'Unknown';
+  }
+}
+
+/**
+ * Get numeric value from a field (for sum/avg operations).
+ */
+function getNumericValue(fields: Record<string, unknown>, valueField: string): number | null {
+  const value = fields[valueField];
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = parseFloat(value);
+    return isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
 export async function getBacklogStats(
   jql: string,
   options: {
@@ -536,22 +728,34 @@ export async function getBacklogStats(
     assignees?: string[];
     sprint?: number;
     boardId?: number;
+    // New options for flexible aggregation
+    groupBy?: StatsField[]; // Which fields to group by (default: all standard fields)
+    pivot?: PivotConfig; // Custom pivot table
+    fieldFilters?: FieldFilter[]; // Additional field-based filters
   },
   projectAllowlist: Set<string> | null,
   issueTypeAllowlist: Set<string> | null
 ): Promise<{
   total: number;
   analyzed: number;
-  byStatus: Record<string, number>;
-  byType: Record<string, number>;
-  byPriority: Record<string, number>;
-  byAssignee: Record<string, number>;
-  byTypeAndStatus: Record<string, Record<string, number>>;
+  byStatus?: Record<string, number>;
+  byType?: Record<string, number>;
+  byPriority?: Record<string, number>;
+  byAssignee?: Record<string, number>;
+  byTypeAndStatus?: Record<string, Record<string, number>>;
+  // Dynamic groupBy results
+  groupedBy?: Record<string, Record<string, number>>;
+  // Custom pivot results
+  pivot?: {
+    rows: string[];
+    columns: string[];
+    data: Record<string, Record<string, number>>;
+    totals: { rows: Record<string, number>; columns: Record<string, number>; grand: number };
+  };
 }> {
   const client = getJiraClient();
 
   // Extract ORDER BY clause if present (case-insensitive)
-  // Handle both "... ORDER BY ..." and JQL that starts with "ORDER BY ..."
   const orderByMatch = jql.match(/^(.*?)\s*(ORDER\s+BY\s+.*)$/i);
   let baseJql = orderByMatch ? orderByMatch[1].trim() : jql;
   const orderByClause = orderByMatch ? orderByMatch[2] : '';
@@ -587,6 +791,36 @@ export async function getBacklogStats(
     filters.push(`sprint = ${options.sprint}`);
   }
 
+  // Add field filters to JQL
+  if (options.fieldFilters) {
+    for (const filter of options.fieldFilters) {
+      const jqlField = filter.field;
+      switch (filter.operator) {
+        case 'eq':
+          filters.push(`${jqlField} = "${filter.value}"`);
+          break;
+        case 'in':
+          if (Array.isArray(filter.value)) {
+            const values = filter.value.map(v => `"${v}"`).join(', ');
+            filters.push(`${jqlField} IN (${values})`);
+          }
+          break;
+        case 'not':
+          filters.push(`${jqlField} != "${filter.value}"`);
+          break;
+        case 'contains':
+          filters.push(`${jqlField} ~ "${filter.value}"`);
+          break;
+        case 'empty':
+          filters.push(`${jqlField} IS EMPTY`);
+          break;
+        case 'notEmpty':
+          filters.push(`${jqlField} IS NOT EMPTY`);
+          break;
+      }
+    }
+  }
+
   // Combine base JQL with filters
   let finalJql = baseJql.trim();
   if (filters.length > 0) {
@@ -602,12 +836,56 @@ export async function getBacklogStats(
     finalJql += ' ' + orderByClause;
   }
 
-  // Aggregate counts across multiple pages
+  // Determine which fields to fetch based on groupBy and pivot
+  const fieldsNeeded = new Set<string>(['status', 'issuetype', 'priority', 'assignee']);
+
+  if (options.groupBy) {
+    for (const field of options.groupBy) {
+      if (field === 'type') fieldsNeeded.add('issuetype');
+      else if (field === 'reporter') fieldsNeeded.add('reporter');
+      else if (field === 'labels') fieldsNeeded.add('labels');
+      else if (field === 'components') fieldsNeeded.add('components');
+      else if (field === 'resolution') fieldsNeeded.add('resolution');
+    }
+  }
+
+  if (options.pivot) {
+    const addPivotField = (f: StatsField) => {
+      if (f === 'type') fieldsNeeded.add('issuetype');
+      else if (f === 'reporter') fieldsNeeded.add('reporter');
+      else if (f === 'labels') fieldsNeeded.add('labels');
+      else if (f === 'components') fieldsNeeded.add('components');
+      else if (f === 'resolution') fieldsNeeded.add('resolution');
+    };
+    addPivotField(options.pivot.rowField);
+    addPivotField(options.pivot.columnField);
+    if (options.pivot.valueField) {
+      fieldsNeeded.add(options.pivot.valueField);
+    }
+  }
+
+  // Use default groupBy if not specified
+  const useDefaultGroups = !options.groupBy;
+  const groupByFields = options.groupBy || [];
+
+  // Standard aggregation (when using defaults)
   const byStatus: Record<string, number> = {};
   const byType: Record<string, number> = {};
   const byPriority: Record<string, number> = {};
   const byAssignee: Record<string, number> = {};
   const byTypeAndStatus: Record<string, Record<string, number>> = {};
+
+  // Dynamic groupBy aggregation
+  const groupedBy: Record<string, Record<string, number>> = {};
+  for (const field of groupByFields) {
+    groupedBy[field] = {};
+  }
+
+  // Custom pivot aggregation
+  const pivotData: Record<string, Record<string, { count: number; sum: number; values: Set<string> }>> = {};
+  const pivotRowTotals: Record<string, { count: number; sum: number }> = {};
+  const pivotColTotals: Record<string, { count: number; sum: number }> = {};
+  let pivotGrandTotal = { count: 0, sum: 0 };
 
   const pageSize = 100;
   let totalFromJira = 0;
@@ -617,12 +895,7 @@ export async function getBacklogStats(
 
   // Fetch up to 4000 issues across multiple pages using token-based pagination
   while (pageCount < 40) { // 40 pages * 100 = 4000 max
-    const response = await client.searchIssues(finalJql, 0, pageSize, [
-      'status',
-      'issuetype',
-      'priority',
-      'assignee',
-    ], nextPageToken);
+    const response = await client.searchIssues(finalJql, 0, pageSize, Array.from(fieldsNeeded), nextPageToken);
     if (response.total !== undefined) {
       totalFromJira = response.total;
     }
@@ -640,24 +913,76 @@ export async function getBacklogStats(
       }
 
       analyzed++;
+      const issueData = { key: issue.key, fields: issue.fields as unknown as Record<string, unknown> };
 
-      const status = issue.fields.status.name;
-      byStatus[status] = (byStatus[status] || 0) + 1;
+      // Standard aggregations (when using defaults)
+      if (useDefaultGroups) {
+        const status = issue.fields.status.name;
+        byStatus[status] = (byStatus[status] || 0) + 1;
 
-      const type = issue.fields.issuetype.name;
-      byType[type] = (byType[type] || 0) + 1;
+        const type = issue.fields.issuetype.name;
+        byType[type] = (byType[type] || 0) + 1;
 
-      // Pivot: Type -> Status
-      if (!byTypeAndStatus[type]) {
-        byTypeAndStatus[type] = {};
+        // Default pivot: Type -> Status
+        if (!byTypeAndStatus[type]) {
+          byTypeAndStatus[type] = {};
+        }
+        byTypeAndStatus[type][status] = (byTypeAndStatus[type][status] || 0) + 1;
+
+        const priority = issue.fields.priority?.name || 'None';
+        byPriority[priority] = (byPriority[priority] || 0) + 1;
+
+        const assignee = issue.fields.assignee?.displayName || 'Unassigned';
+        byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
       }
-      byTypeAndStatus[type][status] = (byTypeAndStatus[type][status] || 0) + 1;
 
-      const priority = issue.fields.priority?.name || 'None';
-      byPriority[priority] = (byPriority[priority] || 0) + 1;
+      // Dynamic groupBy aggregations
+      for (const field of groupByFields) {
+        const values = getFieldValue(issueData, field);
+        const valueArray = Array.isArray(values) ? values : [values];
+        for (const val of valueArray) {
+          groupedBy[field][val] = (groupedBy[field][val] || 0) + 1;
+        }
+      }
 
-      const assignee = issue.fields.assignee?.displayName || 'Unassigned';
-      byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
+      // Custom pivot aggregation
+      if (options.pivot) {
+        const rowValues = getFieldValue(issueData, options.pivot.rowField);
+        const colValues = getFieldValue(issueData, options.pivot.columnField);
+        const rowArray = Array.isArray(rowValues) ? rowValues : [rowValues];
+        const colArray = Array.isArray(colValues) ? colValues : [colValues];
+
+        const numericValue = options.pivot.valueField
+          ? getNumericValue(issue.fields as unknown as Record<string, unknown>, options.pivot.valueField) ?? 0
+          : 1;
+
+        const issueKey = issue.key;
+
+        for (const row of rowArray) {
+          for (const col of colArray) {
+            if (!pivotData[row]) pivotData[row] = {};
+            if (!pivotData[row][col]) pivotData[row][col] = { count: 0, sum: 0, values: new Set() };
+
+            pivotData[row][col].count++;
+            pivotData[row][col].sum += numericValue;
+            pivotData[row][col].values.add(issueKey);
+
+            // Row totals
+            if (!pivotRowTotals[row]) pivotRowTotals[row] = { count: 0, sum: 0 };
+            pivotRowTotals[row].count++;
+            pivotRowTotals[row].sum += numericValue;
+
+            // Column totals
+            if (!pivotColTotals[col]) pivotColTotals[col] = { count: 0, sum: 0 };
+            pivotColTotals[col].count++;
+            pivotColTotals[col].sum += numericValue;
+
+            // Grand total
+            pivotGrandTotal.count++;
+            pivotGrandTotal.sum += numericValue;
+          }
+        }
+      }
     }
 
     pageCount++;
@@ -669,15 +994,122 @@ export async function getBacklogStats(
     nextPageToken = response.nextPageToken;
   }
 
-  return {
+  // Build result
+  const result: {
+    total: number;
+    analyzed: number;
+    byStatus?: Record<string, number>;
+    byType?: Record<string, number>;
+    byPriority?: Record<string, number>;
+    byAssignee?: Record<string, number>;
+    byTypeAndStatus?: Record<string, Record<string, number>>;
+    groupedBy?: Record<string, Record<string, number>>;
+    pivot?: {
+      rows: string[];
+      columns: string[];
+      data: Record<string, Record<string, number>>;
+      totals: { rows: Record<string, number>; columns: Record<string, number>; grand: number };
+    };
+  } = {
     total: totalFromJira || analyzed,
     analyzed,
-    byStatus,
-    byType,
-    byPriority,
-    byAssignee,
-    byTypeAndStatus,
   };
+
+  // Include standard aggregations only when using defaults
+  if (useDefaultGroups) {
+    result.byStatus = byStatus;
+    result.byType = byType;
+    result.byPriority = byPriority;
+    result.byAssignee = byAssignee;
+    result.byTypeAndStatus = byTypeAndStatus;
+  }
+
+  // Include dynamic groupBy results
+  if (groupByFields.length > 0) {
+    result.groupedBy = groupedBy;
+  }
+
+  // Include custom pivot results
+  if (options.pivot) {
+    const action = options.pivot.action || 'count';
+    const rows = Object.keys(pivotData).sort();
+    const columns = [...new Set(rows.flatMap(r => Object.keys(pivotData[r])))].sort();
+
+    // Convert pivot data based on action
+    const data: Record<string, Record<string, number>> = {};
+    for (const row of rows) {
+      data[row] = {};
+      for (const col of columns) {
+        const cell = pivotData[row]?.[col];
+        if (!cell) {
+          data[row][col] = 0;
+        } else {
+          switch (action) {
+            case 'count':
+              data[row][col] = cell.count;
+              break;
+            case 'sum':
+              data[row][col] = cell.sum;
+              break;
+            case 'avg':
+              data[row][col] = cell.count > 0 ? cell.sum / cell.count : 0;
+              break;
+            case 'cardinality':
+              data[row][col] = cell.values.size;
+              break;
+          }
+        }
+      }
+    }
+
+    // Convert totals based on action
+    const rowTotals: Record<string, number> = {};
+    const colTotals: Record<string, number> = {};
+
+    for (const row of rows) {
+      const t = pivotRowTotals[row];
+      switch (action) {
+        case 'count': rowTotals[row] = t?.count || 0; break;
+        case 'sum': rowTotals[row] = t?.sum || 0; break;
+        case 'avg': rowTotals[row] = t?.count ? t.sum / t.count : 0; break;
+        case 'cardinality': rowTotals[row] = Object.values(pivotData[row] || {}).reduce((acc, c) => acc + c.values.size, 0); break;
+      }
+    }
+
+    for (const col of columns) {
+      const t = pivotColTotals[col];
+      switch (action) {
+        case 'count': colTotals[col] = t?.count || 0; break;
+        case 'sum': colTotals[col] = t?.sum || 0; break;
+        case 'avg': colTotals[col] = t?.count ? t.sum / t.count : 0; break;
+        case 'cardinality': {
+          const allValues = new Set<string>();
+          for (const row of rows) {
+            pivotData[row]?.[col]?.values.forEach(v => allValues.add(v));
+          }
+          colTotals[col] = allValues.size;
+          break;
+        }
+      }
+    }
+
+    let grand: number;
+    switch (action) {
+      case 'count': grand = pivotGrandTotal.count; break;
+      case 'sum': grand = pivotGrandTotal.sum; break;
+      case 'avg': grand = pivotGrandTotal.count ? pivotGrandTotal.sum / pivotGrandTotal.count : 0; break;
+      case 'cardinality': grand = analyzed; break; // Total unique issues
+    }
+
+    result.pivot = {
+      rows,
+      columns,
+      data,
+      totals: { rows: rowTotals, columns: colTotals, grand },
+    };
+  }
+
+  return result;
 }
 
 export async function getIssueHistory(

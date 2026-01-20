@@ -213,11 +213,15 @@ export interface GetActiveSprintResult {
 
 export interface SprintIssuesSummary {
   key: string;
-  summary: string;
-  status: string;
-  statusCategory: string;
+  summary?: string;
+  status?: string;
+  statusCategory?: string;
   assignee?: string;
   priority?: string;
+  type?: string;
+  description?: string;
+  labels?: string[];
+  customFields?: Record<string, unknown>;
 }
 
 export interface GetSprintIssuesResult {
@@ -228,20 +232,20 @@ export interface GetSprintIssuesResult {
 
 export interface IssueDetails {
   key: string;
-  summary: string;
+  summary?: string;
   description?: string;
-  type: string;
-  status: string;
-  statusCategory: string;
+  type?: string;
+  status?: string;
+  statusCategory?: string;
   priority?: string;
   assignee?: string;
   reporter?: string;
-  created: string;
-  updated: string;
-  labels: string[];
-  components: string[];
-  attachmentCount: number;
-  commentCount: number;
+  created?: string;
+  updated?: string;
+  labels?: string[];
+  components?: string[];
+  attachmentCount?: number;
+  commentCount?: number;
   // Parent epic/issue info
   parent?: {
     key: string;

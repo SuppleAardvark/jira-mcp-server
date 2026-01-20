@@ -6,7 +6,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { listBoards, getActiveSprint, getSprintIssues, getMySprintIssues } from './tools/sprint.js';
+import { listBoards, getActiveSprint, getSprintIssues, getMySprintIssues, type SprintIssueField } from './tools/sprint.js';
 import {
   getIssue,
   searchIssues,
@@ -18,6 +18,8 @@ import {
   createIssue,
   getIssueHistory,
   getBacklogStats,
+  type IssueField,
+  type SearchIssueField,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
 import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist, parseProjectAllowlist } from './permissions.js';
@@ -70,7 +72,7 @@ const allTools = [
     },
     {
       name: 'jira_get_sprint_issues',
-      description: 'Get all issues in a specific sprint. Returns issue keys, summaries, statuses, and assignees.',
+      description: 'Get all issues in a specific sprint. Returns issue keys, summaries, statuses, and assignees by default. Use the fields parameter to customize which fields are returned.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -82,13 +84,21 @@ const allTools = [
             type: 'number',
             description: 'Maximum number of issues to return (default: 50)',
           },
+          fields: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['key', 'summary', 'status', 'statusCategory', 'assignee', 'priority', 'type', 'description', 'labels', 'customFields'],
+            },
+            description: 'Fields to include in the response. Default: ["key", "summary", "status", "statusCategory", "assignee", "priority"]. Use "customFields" to include custom fields.',
+          },
         },
         required: ['sprintId'],
       },
     },
     {
       name: 'jira_get_my_sprint_issues',
-      description: 'Get issues assigned to the current user in a specific sprint. Filters by assignee = currentUser(). Returns issue keys, summaries, statuses, and priorities sorted by status then priority.',
+      description: 'Get issues assigned to the current user in a specific sprint. Filters by assignee = currentUser(). Returns issue keys, summaries, statuses, and priorities sorted by status then priority by default. Use the fields parameter to customize which fields are returned.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -100,6 +110,14 @@ const allTools = [
             type: 'number',
             description: 'Maximum number of issues to return (default: 200)',
           },
+          fields: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['key', 'summary', 'status', 'statusCategory', 'assignee', 'priority', 'type', 'description', 'labels', 'customFields'],
+            },
+            description: 'Fields to include in the response. Default: ["key", "summary", "status", "statusCategory", "assignee", "priority"]. Use "customFields" to include custom fields.',
+          },
         },
         required: ['sprintId'],
       },
@@ -107,13 +125,21 @@ const allTools = [
     // Issue tools
     {
       name: 'jira_get_issue',
-      description: 'Get detailed information about a specific JIRA issue by its key (e.g., PROJ-123). Returns summary, description, status, assignee, labels, and more.',
+      description: 'Get detailed information about a specific JIRA issue by its key (e.g., PROJ-123). Returns all fields by default including custom fields. Use the fields parameter to reduce response size.',
       inputSchema: {
         type: 'object',
         properties: {
           issueKey: {
             type: 'string',
             description: 'The issue key (e.g., PROJ-123)',
+          },
+          fields: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['key', 'summary', 'description', 'type', 'status', 'statusCategory', 'priority', 'assignee', 'reporter', 'created', 'updated', 'labels', 'components', 'attachmentCount', 'commentCount', 'parent', 'customFields'],
+            },
+            description: 'Fields to include in the response. Default: all fields. Use to reduce response size by specifying only needed fields.',
           },
         },
         required: ['issueKey'],
@@ -133,13 +159,21 @@ const allTools = [
             type: 'number',
             description: 'Maximum number of results to return. Defaults to 50 if not specified.',
           },
+          fields: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['key', 'summary', 'status', 'statusCategory', 'assignee', 'type', 'parent', 'priority', 'description', 'labels', 'customFields'],
+            },
+            description: 'Fields to include in the response. Default: ["key", "summary", "status", "statusCategory", "assignee", "type", "parent"]. Use "customFields" to include custom fields.',
+          },
         },
         required: ['jql'],
       },
     },
     {
       name: 'jira_get_backlog_stats',
-      description: 'Get aggregated statistics for issues matching a JQL query. Returns counts grouped by status, type, priority, and assignee. Useful for quick backlog overview without paginating through all issues.',
+      description: 'Get aggregated statistics for issues matching a JQL query. Returns counts grouped by status, type, priority, and assignee by default. Supports custom pivoting on any field pair with aggregation actions (count, sum, avg, cardinality) and flexible field filters.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -168,6 +202,66 @@ const allTools = [
           sprint: {
             type: 'number',
             description: 'Filter by sprint ID',
+          },
+          groupBy: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['status', 'type', 'priority', 'assignee', 'reporter', 'labels', 'components', 'resolution', 'project'],
+            },
+            description: 'Fields to group by. If specified, replaces default aggregations with custom groupedBy results.',
+          },
+          pivot: {
+            type: 'object',
+            description: 'Custom pivot table configuration',
+            properties: {
+              rowField: {
+                type: 'string',
+                enum: ['status', 'type', 'priority', 'assignee', 'reporter', 'labels', 'components', 'resolution', 'project'],
+                description: 'Field for pivot table rows',
+              },
+              columnField: {
+                type: 'string',
+                enum: ['status', 'type', 'priority', 'assignee', 'reporter', 'labels', 'components', 'resolution', 'project'],
+                description: 'Field for pivot table columns',
+              },
+              action: {
+                type: 'string',
+                enum: ['count', 'sum', 'avg', 'cardinality'],
+                description: 'Aggregation action (default: count). Use sum/avg with valueField for numeric aggregations.',
+              },
+              valueField: {
+                type: 'string',
+                description: 'Custom field ID for sum/avg operations (e.g., customfield_10001 for story points)',
+              },
+            },
+            required: ['rowField', 'columnField'],
+          },
+          fieldFilters: {
+            type: 'array',
+            description: 'Additional field-based filters applied via JQL',
+            items: {
+              type: 'object',
+              properties: {
+                field: {
+                  type: 'string',
+                  description: 'JQL field name (e.g., status, priority, labels, customfield_10001)',
+                },
+                operator: {
+                  type: 'string',
+                  enum: ['eq', 'in', 'not', 'contains', 'empty', 'notEmpty'],
+                  description: 'Filter operator',
+                },
+                value: {
+                  oneOf: [
+                    { type: 'string' },
+                    { type: 'array', items: { type: 'string' } },
+                  ],
+                  description: 'Filter value (string or array for "in" operator)',
+                },
+              },
+              required: ['field', 'operator'],
+            },
           },
         },
         required: ['jql'],
@@ -445,10 +539,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'jira_get_sprint_issues': {
         const sprintId = args?.sprintId as number;
         const maxResults = (args?.maxResults as number) || 50;
+        const fields = args?.fields as SprintIssueField[] | undefined;
         if (!sprintId) {
           throw new Error('sprintId is required');
         }
-        const result = await getSprintIssues(sprintId, maxResults, boardAllowlist);
+        const result = await getSprintIssues(sprintId, maxResults, boardAllowlist, fields);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -457,10 +552,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'jira_get_my_sprint_issues': {
         const sprintId = args?.sprintId as number;
         const maxResults = (args?.maxResults as number) || 200;
+        const fields = args?.fields as SprintIssueField[] | undefined;
         if (!sprintId) {
           throw new Error('sprintId is required');
         }
-        const result = await getMySprintIssues(sprintId, maxResults, boardAllowlist);
+        const result = await getMySprintIssues(sprintId, maxResults, boardAllowlist, fields);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -469,10 +565,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Issue tools
       case 'jira_get_issue': {
         const issueKey = args?.issueKey as string;
+        const fields = args?.fields as IssueField[] | undefined;
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getIssue(issueKey, issueTypeAllowlist, projectAllowlist);
+        const result = await getIssue(issueKey, issueTypeAllowlist, projectAllowlist, fields);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -481,10 +578,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'jira_search_issues': {
         const jql = args?.jql as string;
         const maxResults = (args?.maxResults as number) || 50;
+        const fields = args?.fields as SearchIssueField[] | undefined;
         if (!jql) {
           throw new Error('jql is required');
         }
-        const result = await searchIssues(jql, maxResults, issueTypeAllowlist, projectAllowlist);
+        const result = await searchIssues(jql, maxResults, issueTypeAllowlist, projectAllowlist, fields);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -501,6 +599,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           assignees: args?.assignees as string[] | undefined,
           sprint: args?.sprint as number | undefined,
           boardId: args?.boardId as number | undefined,
+          groupBy: args?.groupBy as import('./tools/issues.js').StatsField[] | undefined,
+          pivot: args?.pivot as import('./tools/issues.js').PivotConfig | undefined,
+          fieldFilters: args?.fieldFilters as import('./tools/issues.js').FieldFilter[] | undefined,
         };
         const result = await getBacklogStats(jql, options, projectAllowlist, issueTypeAllowlist);
         return {
