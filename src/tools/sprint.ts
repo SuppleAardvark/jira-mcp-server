@@ -5,6 +5,7 @@ import type {
   GetSprintIssuesResult,
   SprintIssuesSummary,
   JiraDocument,
+  ListSprintsResult,
 } from '../types.js';
 import { type Allowlist, isBoardAllowed } from '../permissions.js';
 import { adfToText, extractCustomFieldValue } from './issues.js';
@@ -56,6 +57,104 @@ export async function getActiveSprint(
       endDate: sprint.endDate,
       goal: sprint.goal,
     },
+  };
+}
+
+export async function listSprints(
+  options: {
+    boardId?: number;
+    projectKey?: string;
+    state?: 'active' | 'future' | 'closed';
+    startAt?: number;
+    maxResults?: number;
+  },
+  boardAllowlist: Allowlist
+): Promise<ListSprintsResult> {
+  const client = getJiraClient();
+  const maxResults = options.maxResults || 50;
+  const startAt = options.startAt || 0;
+
+  if (!options.boardId && !options.projectKey) {
+    throw new Error('Either boardId or projectKey is required');
+  }
+
+  // Get boards to query
+  let boardIds: number[] = [];
+
+  if (options.boardId) {
+    // Verify single board is allowed
+    const board = await client.getBoard(options.boardId);
+    if (!isBoardAllowed(board.id, board.name, boardAllowlist)) {
+      throw new Error(`Board not found: ${options.boardId}`);
+    }
+    boardIds = [options.boardId];
+  } else if (options.projectKey) {
+    // Get all boards for the project
+    const boardsResponse = await client.listBoards(0, 100);
+    boardIds = boardsResponse.values
+      .filter(board =>
+        board.location?.projectKey === options.projectKey &&
+        isBoardAllowed(board.id, board.name, boardAllowlist)
+      )
+      .map(board => board.id);
+
+    if (boardIds.length === 0) {
+      throw new Error(`No boards found for project: ${options.projectKey}`);
+    }
+  }
+
+  // Collect sprints from all boards
+  const allSprints: Array<{
+    id: number;
+    name: string;
+    state: 'active' | 'closed' | 'future';
+    startDate?: string;
+    endDate?: string;
+    completeDate?: string;
+    goal?: string;
+    boardId: number;
+  }> = [];
+
+  const seenSprintIds = new Set<number>();
+
+  for (const boardId of boardIds) {
+    // Fetch more than needed to handle pagination after deduplication
+    const response = await client.getSprintsForBoard(boardId, options.state, 0, 200);
+
+    for (const sprint of response.values) {
+      if (!seenSprintIds.has(sprint.id)) {
+        seenSprintIds.add(sprint.id);
+        allSprints.push({
+          id: sprint.id,
+          name: sprint.name,
+          state: sprint.state,
+          startDate: sprint.startDate,
+          endDate: sprint.endDate,
+          completeDate: sprint.completeDate,
+          goal: sprint.goal,
+          boardId: sprint.originBoardId,
+        });
+      }
+    }
+  }
+
+  // Sort by most recent (startDate descending, with nulls last)
+  allSprints.sort((a, b) => {
+    if (!a.startDate && !b.startDate) return 0;
+    if (!a.startDate) return 1;
+    if (!b.startDate) return -1;
+    return new Date(b.startDate).getTime() - new Date(a.startDate).getTime();
+  });
+
+  // Apply pagination
+  const paginatedSprints = allSprints.slice(startAt, startAt + maxResults);
+
+  return {
+    sprints: paginatedSprints,
+    total: allSprints.length,
+    startAt,
+    maxResults,
+    hasMore: startAt + maxResults < allSprints.length,
   };
 }
 

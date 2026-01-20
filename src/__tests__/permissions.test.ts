@@ -24,6 +24,7 @@ describe('SCOPES', () => {
       'comments:write',
       'attachments:read',
       'attachments:write',
+      'debug',
     ];
     expect(Object.keys(SCOPES).sort()).toEqual(expectedScopes.sort());
   });
@@ -66,6 +67,10 @@ describe('SCOPES', () => {
   it('attachments:write contains jira_upload_attachment', () => {
     expect(SCOPES['attachments:write']).toContain('jira_upload_attachment');
   });
+
+  it('debug contains jira_debug_search', () => {
+    expect(SCOPES['debug']).toContain('jira_debug_search');
+  });
 });
 
 describe('parseScopes', () => {
@@ -79,9 +84,9 @@ describe('parseScopes', () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it('returns all tools when envValue is undefined', () => {
+  it('returns all tools when envValue is undefined (except opt-in scopes)', () => {
     const allowed = parseScopes(undefined);
-    // Should contain tools from all scopes
+    // Should contain tools from all default scopes
     expect(allowed.has('jira_list_boards')).toBe(true);
     expect(allowed.has('jira_get_active_sprint')).toBe(true);
     expect(allowed.has('jira_get_issue')).toBe(true);
@@ -90,6 +95,8 @@ describe('parseScopes', () => {
     expect(allowed.has('jira_add_comment')).toBe(true);
     expect(allowed.has('jira_list_attachments')).toBe(true);
     expect(allowed.has('jira_upload_attachment')).toBe(true);
+    // Should NOT contain tools from opt-in scopes (debug)
+    expect(allowed.has('jira_debug_search')).toBe(false);
   });
 
   it('returns all tools when envValue is empty string', () => {
@@ -159,6 +166,14 @@ describe('parseScopes', () => {
       }
     }
     expect(allowed.size).toBe(allTools.size);
+  });
+
+  it('enables debug tools only when debug scope is explicitly included', () => {
+    const allowed = parseScopes('issues:read,debug');
+    expect(allowed.has('jira_get_issue')).toBe(true);
+    expect(allowed.has('jira_debug_search')).toBe(true);
+    // Should not have tools from other scopes
+    expect(allowed.has('jira_list_boards')).toBe(false);
   });
 });
 

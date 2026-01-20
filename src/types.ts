@@ -211,6 +211,25 @@ export interface GetActiveSprintResult {
   } | null;
 }
 
+export interface SprintSummary {
+  id: number;
+  name: string;
+  state: 'active' | 'closed' | 'future';
+  startDate?: string;
+  endDate?: string;
+  completeDate?: string;
+  goal?: string;
+  boardId: number;
+}
+
+export interface ListSprintsResult {
+  sprints: SprintSummary[];
+  total: number;
+  startAt: number;
+  maxResults: number;
+  hasMore: boolean;
+}
+
 export interface SprintIssuesSummary {
   key: string;
   summary?: string;

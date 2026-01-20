@@ -6,7 +6,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { listBoards, getActiveSprint, getSprintIssues, getMySprintIssues, type SprintIssueField } from './tools/sprint.js';
+import { listBoards, getActiveSprint, listSprints, getSprintIssues, getMySprintIssues, type SprintIssueField } from './tools/sprint.js';
 import {
   getIssue,
   searchIssues,
@@ -20,8 +20,11 @@ import {
   getBacklogStats,
   debugSearch,
   getFieldSchema,
+  getSprintReport,
+  listFieldValues,
   type IssueField,
   type SearchIssueField,
+  type ListableField,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
 import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist, parseProjectAllowlist } from './permissions.js';
@@ -70,6 +73,36 @@ const allTools = [
           },
         },
         required: ['boardId'],
+      },
+    },
+    {
+      name: 'jira_list_sprints',
+      description: 'List sprints for a board or project. Returns sprint IDs, names, states, dates, and goals sorted by most recent first. Supports pagination.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          boardId: {
+            type: 'number',
+            description: 'The ID of a specific JIRA board. Either boardId or projectKey is required.',
+          },
+          projectKey: {
+            type: 'string',
+            description: 'Project key to get sprints from all boards in the project (e.g., "PROJ"). Either boardId or projectKey is required.',
+          },
+          state: {
+            type: 'string',
+            enum: ['active', 'future', 'closed'],
+            description: 'Filter sprints by state. If not specified, returns all sprints.',
+          },
+          startAt: {
+            type: 'number',
+            description: 'Index of the first sprint to return (for pagination). Default: 0.',
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of sprints to return (default: 50)',
+          },
+        },
       },
     },
     {
@@ -267,6 +300,53 @@ const allTools = [
           },
         },
         required: ['jql'],
+      },
+    },
+    {
+      name: 'jira_get_sprint_report',
+      description: 'Generate a sprint report for retrospectives. Returns issue counts and story points grouped by status categories, bug metrics, and label-specific tracking. Compares current sprint with previous sprint.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sprintId: {
+            type: 'number',
+            description: 'The current sprint ID',
+          },
+          previousSprintId: {
+            type: 'number',
+            description: 'The previous sprint ID for comparison (optional)',
+          },
+          projectKey: {
+            type: 'string',
+            description: 'Project key (e.g., "PROJ")',
+          },
+          storyPointsField: {
+            type: 'string',
+            description: 'Custom field ID for story points (e.g., "customfield_10024"). Use jira_get_field_schema to find this.',
+          },
+          labelsOfInterest: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Labels to track separately (e.g., ["NZ", "TopTen"]). Returns complete/not complete counts for each.',
+          },
+          statusGroups: {
+            type: 'object',
+            description: 'Custom status groupings. Keys are group names, values are arrays of status names. Defaults include: To Do, Blocked, In Progress, Design Review, To Test, Done.',
+            additionalProperties: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+          },
+          includeTriage: {
+            type: 'boolean',
+            description: 'Include triage metrics (issues created after sprint started). Default: false.',
+          },
+          includeInflow: {
+            type: 'boolean',
+            description: 'Include inflow metrics (issues pulled from backlog after sprint started). Requires changelog lookups. Default: false.',
+          },
+        },
+        required: ['sprintId', 'projectKey', 'storyPointsField'],
       },
     },
     {
@@ -521,6 +601,35 @@ const allTools = [
       },
     },
 
+    // Field values tool
+    {
+      name: 'jira_list_field_values',
+      description: 'List discrete values for a JIRA field. Supports labels, priorities, statuses, issue types, resolutions, and components. Useful for discovering valid values before creating/updating issues.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          field: {
+            type: 'string',
+            enum: ['labels', 'priorities', 'statuses', 'issueTypes', 'resolutions', 'components'],
+            description: 'The field to list values for',
+          },
+          projectKey: {
+            type: 'string',
+            description: 'Project key (required for "components" field, e.g., "PROJ")',
+          },
+          searchTerm: {
+            type: 'string',
+            description: 'Filter values by name (case-insensitive partial match)',
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of values to return (default: 1000 for labels)',
+          },
+        },
+        required: ['field'],
+      },
+    },
+
     // Debug tools
     {
       name: 'jira_debug_search',
@@ -580,6 +689,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('boardId is required');
         }
         const result = await getActiveSprint(boardId, boardAllowlist);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'jira_list_sprints': {
+        const boardId = args?.boardId as number | undefined;
+        const projectKey = args?.projectKey as string | undefined;
+        if (!boardId && !projectKey) {
+          throw new Error('Either boardId or projectKey is required');
+        }
+        const options = {
+          boardId,
+          projectKey,
+          state: args?.state as 'active' | 'future' | 'closed' | undefined,
+          startAt: args?.startAt as number | undefined,
+          maxResults: args?.maxResults as number | undefined,
+        };
+        const result = await listSprints(options, boardAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -653,6 +781,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           fieldFilters: args?.fieldFilters as import('./tools/issues.js').FieldFilter[] | undefined,
         };
         const result = await getBacklogStats(jql, options, projectAllowlist, issueTypeAllowlist);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'jira_get_sprint_report': {
+        const sprintId = args?.sprintId as number;
+        const projectKey = args?.projectKey as string;
+        const storyPointsField = args?.storyPointsField as string;
+        if (!sprintId || !projectKey || !storyPointsField) {
+          throw new Error('sprintId, projectKey, and storyPointsField are required');
+        }
+        const options = {
+          sprintId,
+          projectKey,
+          storyPointsField,
+          previousSprintId: args?.previousSprintId as number | undefined,
+          labelsOfInterest: args?.labelsOfInterest as string[] | undefined,
+          statusGroups: args?.statusGroups as Record<string, string[]> | undefined,
+          includeTriage: args?.includeTriage as boolean | undefined,
+          includeInflow: args?.includeInflow as boolean | undefined,
+        };
+        const result = await getSprintReport(options, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -809,6 +960,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const customOnly = args?.customOnly as boolean | undefined;
         const searchTerm = args?.searchTerm as string | undefined;
         const result = await getFieldSchema({ projectKey, customOnly, searchTerm });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      // Field values tool
+      case 'jira_list_field_values': {
+        const field = args?.field as ListableField;
+        if (!field) {
+          throw new Error('field is required');
+        }
+        const projectKey = args?.projectKey as string | undefined;
+        const searchTerm = args?.searchTerm as string | undefined;
+        const maxResults = args?.maxResults as number | undefined;
+        const result = await listFieldValues({ field, projectKey, searchTerm, maxResults });
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

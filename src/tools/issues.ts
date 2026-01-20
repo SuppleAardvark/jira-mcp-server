@@ -1331,3 +1331,529 @@ export async function getIssueHistory(
     total: response.total,
   };
 }
+
+/**
+ * List all labels in JIRA, optionally filtered by a search term.
+ */
+export type ListableField = 'labels' | 'priorities' | 'statuses' | 'issueTypes' | 'resolutions' | 'components';
+
+export interface FieldValue {
+  id?: string;
+  name: string;
+  description?: string;
+  // Additional field-specific properties
+  extra?: Record<string, unknown>;
+}
+
+export async function listFieldValues(options: {
+  field: ListableField;
+  projectKey?: string;  // Required for 'components' field
+  searchTerm?: string;
+  maxResults?: number;
+}): Promise<{
+  field: ListableField;
+  values: FieldValue[];
+  total: number;
+}> {
+  const client = getJiraClient();
+  let values: FieldValue[] = [];
+
+  switch (options.field) {
+    case 'labels': {
+      const response = await client.getLabels(0, options.maxResults || 1000);
+      values = response.values.map(name => ({ name }));
+      break;
+    }
+
+    case 'priorities': {
+      const priorities = await client.getPriorities();
+      values = priorities.map(p => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        extra: p.iconUrl ? { iconUrl: p.iconUrl } : undefined,
+      }));
+      break;
+    }
+
+    case 'statuses': {
+      const statuses = await client.getStatuses();
+      values = statuses.map(s => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        extra: { statusCategory: s.statusCategory },
+      }));
+      break;
+    }
+
+    case 'issueTypes': {
+      const types = await client.getIssueTypes();
+      values = types.map(t => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        extra: { subtask: t.subtask },
+      }));
+      break;
+    }
+
+    case 'resolutions': {
+      const resolutions = await client.getResolutions();
+      values = resolutions.map(r => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+      }));
+      break;
+    }
+
+    case 'components': {
+      if (!options.projectKey) {
+        throw new Error('projectKey is required when listing components');
+      }
+      const components = await client.getProjectComponents(options.projectKey);
+      values = components.map(c => ({
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        extra: c.lead ? { lead: c.lead } : undefined,
+      }));
+      break;
+    }
+
+    default:
+      throw new Error(`Unknown field: ${options.field}`);
+  }
+
+  // Filter by search term if provided
+  if (options.searchTerm) {
+    const term = options.searchTerm.toLowerCase();
+    values = values.filter(v => v.name.toLowerCase().includes(term));
+  }
+
+  // Sort alphabetically
+  values.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Apply maxResults limit (for non-labels which don't have server-side pagination)
+  if (options.maxResults && options.field !== 'labels') {
+    values = values.slice(0, options.maxResults);
+  }
+
+  return {
+    field: options.field,
+    values,
+    total: values.length,
+  };
+}
+
+/**
+ * Status group definitions for sprint reports.
+ * Maps group names to arrays of status names that belong to that group.
+ */
+const DEFAULT_STATUS_GROUPS: Record<string, string[]> = {
+  'To Do': ['To Do', 'Open', 'Reopened'],
+  'Blocked': ['Blocked'],
+  'In Progress': ['In Progress', 'Ready to Style'],
+  'Design Review': ['Design Review'],
+  'To Test': ['Ready to Test', 'To Test', 'In Review'],
+  'Done': ['Done', 'Closed', 'Invalid', 'Parked', 'Resolved'],
+};
+
+interface SprintReportMetrics {
+  issues: number;
+  storyPoints: number;
+}
+
+interface SprintReportRow {
+  current: SprintReportMetrics;
+  previous?: SprintReportMetrics;
+}
+
+interface LabelMetrics {
+  complete: SprintReportMetrics;
+  notComplete: SprintReportMetrics;
+}
+
+export interface SprintReportResult {
+  currentSprint: { id: number; name: string };
+  previousSprint?: { id: number; name: string };
+  storyPointsField: string;
+  storyPointsFieldName?: string;
+
+  // Status group rows
+  statusGroups: Record<string, SprintReportRow>;
+
+  // Triage: items created after the sprint started (optional)
+  triage?: SprintReportRow;
+
+  // Inflow: items added to the sprint after it started (from backlog, optional)
+  inflow?: SprintReportRow;
+
+  // Bug metrics
+  bugs: {
+    backlogTotal: SprintReportMetrics;
+    fixedInSprint: SprintReportRow;
+    notFixedInSprint: SprintReportRow;
+  };
+
+  // Label-specific metrics
+  labels: Record<string, {
+    current: LabelMetrics;
+    previous?: LabelMetrics;
+  }>;
+}
+
+/**
+ * Generate a sprint report with status groups, bug metrics, and label tracking.
+ * Designed for retrospective reports.
+ */
+export async function getSprintReport(
+  options: {
+    sprintId: number;
+    previousSprintId?: number;
+    storyPointsField: string;
+    labelsOfInterest?: string[];
+    statusGroups?: Record<string, string[]>;
+    projectKey: string;
+    includeTriage?: boolean;
+    includeInflow?: boolean;
+  },
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
+): Promise<SprintReportResult> {
+  const client = getJiraClient();
+  const statusGroups = options.statusGroups || DEFAULT_STATUS_GROUPS;
+  const doneStatuses = statusGroups['Done'] || ['Done'];
+  const toTestStatuses = statusGroups['To Test'] || ['Ready to Test'];
+  const fixedStatuses = [...doneStatuses, ...toTestStatuses];
+
+  // Get sprint info
+  const currentSprint = await client.getSprint(options.sprintId);
+  let previousSprint: typeof currentSprint | undefined;
+  if (options.previousSprintId) {
+    previousSprint = await client.getSprint(options.previousSprintId);
+  }
+
+  // Get field name for story points
+  const allFields = await client.getFields();
+  const spFieldMeta = allFields.find(f => f.id === options.storyPointsField);
+  const storyPointsFieldName = spFieldMeta?.name;
+
+  // Helper to get stats for a sprint
+  const getSprintStats = async (sprintId: number) => {
+    return getBacklogStats(
+      `project = ${options.projectKey}`,
+      {
+        sprint: sprintId,
+        groupBy: ['status'],
+        pivot: {
+          rowField: 'status',
+          columnField: 'type',
+          action: 'sum',
+          valueField: options.storyPointsField,
+        },
+      },
+      issueTypeAllowlist,
+      projectAllowlist
+    );
+  };
+
+  // Get current sprint stats
+  const currentStats = await getSprintStats(options.sprintId);
+
+  // Get previous sprint stats if requested
+  let previousStats: typeof currentStats | undefined;
+  if (options.previousSprintId) {
+    previousStats = await getSprintStats(options.previousSprintId);
+  }
+
+  // Helper to aggregate metrics from status groups
+  const aggregateStatusGroup = (
+    stats: typeof currentStats,
+    statuses: string[]
+  ): SprintReportMetrics => {
+    let issues = 0;
+    let storyPoints = 0;
+
+    const byStatus = stats.groupedBy?.status || stats.byStatus || {};
+    const pivotData = stats.pivot?.data || {};
+
+    for (const status of statuses) {
+      issues += byStatus[status] || 0;
+      // Sum story points across all issue types for this status
+      const statusRow = pivotData[status];
+      if (statusRow) {
+        storyPoints += Object.values(statusRow).reduce((a, b) => a + b, 0);
+      }
+    }
+
+    return { issues, storyPoints };
+  };
+
+  // Build status group rows
+  const statusGroupResults: Record<string, SprintReportRow> = {};
+  for (const [groupName, statuses] of Object.entries(statusGroups)) {
+    statusGroupResults[groupName] = {
+      current: aggregateStatusGroup(currentStats, statuses),
+    };
+    if (previousStats) {
+      statusGroupResults[groupName].previous = aggregateStatusGroup(previousStats, statuses);
+    }
+  }
+
+  // Triage: items created after the sprint started (optional)
+  let triageRow: SprintReportRow | undefined;
+  if (options.includeTriage) {
+    const getTriageMetrics = async (sprintId: number, sprintStartDate: string | undefined): Promise<SprintReportMetrics> => {
+      if (!sprintStartDate) {
+        return { issues: 0, storyPoints: 0 };
+      }
+      // Format date for JQL (JIRA expects yyyy-MM-dd)
+      const startDate = sprintStartDate.split('T')[0];
+      const triageStats = await getBacklogStats(
+        `project = ${options.projectKey} AND sprint = ${sprintId} AND created >= "${startDate}"`,
+        {
+          pivot: {
+            rowField: 'status',
+            columnField: 'type',
+            action: 'sum',
+            valueField: options.storyPointsField,
+          },
+        },
+        issueTypeAllowlist,
+        projectAllowlist
+      );
+      return {
+        issues: triageStats.total,
+        storyPoints: triageStats.pivot?.totals?.grand || 0,
+      };
+    };
+
+    triageRow = {
+      current: await getTriageMetrics(options.sprintId, currentSprint.startDate),
+    };
+    if (options.previousSprintId && previousSprint) {
+      triageRow.previous = await getTriageMetrics(options.previousSprintId, previousSprint.startDate);
+    }
+  }
+
+  // Inflow: items created before the sprint started but added to the sprint after it started (optional)
+  let inflowRow: SprintReportRow | undefined;
+  if (options.includeInflow) {
+    const getInflowMetrics = async (sprintId: number, sprintName: string, sprintStartDate: string | undefined): Promise<SprintReportMetrics> => {
+      if (!sprintStartDate) {
+        return { issues: 0, storyPoints: 0 };
+      }
+      const startDate = sprintStartDate.split('T')[0];
+      const sprintStartTime = new Date(sprintStartDate).getTime();
+
+      // Get issues created BEFORE sprint started (these are potential inflow candidates)
+      const candidateIssues = await client.searchIssues(
+        `project = ${options.projectKey} AND sprint = ${sprintId} AND created < "${startDate}"`,
+        0,
+        500,
+        ['key', options.storyPointsField]
+      );
+
+      let inflowIssues = 0;
+      let inflowPoints = 0;
+
+      // Check each candidate's changelog to see when it was added to this sprint
+      for (const issue of candidateIssues.issues) {
+        const changelog = await client.getIssueChangelog(issue.key, 100);
+
+        // Look for when the sprint field was changed to include this sprint
+        for (const entry of changelog.values) {
+          const changeTime = new Date(entry.created).getTime();
+          if (changeTime <= sprintStartTime) {
+            // Change happened before sprint started, not inflow
+            continue;
+          }
+
+          // Check if any item in this changelog entry added this sprint
+          for (const item of entry.items) {
+            if (item.field === 'Sprint' && item.toString?.includes(sprintName)) {
+              // This issue was added to the sprint after it started
+              inflowIssues++;
+              const points = issue.fields[options.storyPointsField];
+              if (typeof points === 'number') {
+                inflowPoints += points;
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      return { issues: inflowIssues, storyPoints: inflowPoints };
+    };
+
+    inflowRow = {
+      current: await getInflowMetrics(options.sprintId, currentSprint.name, currentSprint.startDate),
+    };
+    if (options.previousSprintId && previousSprint) {
+      inflowRow.previous = await getInflowMetrics(options.previousSprintId, previousSprint.name, previousSprint.startDate);
+    }
+  }
+
+  // Bug metrics - get bugs in backlog (not in any active sprint)
+  const bugBacklogStats = await getBacklogStats(
+    `project = ${options.projectKey} AND type = Bug AND sprint IS EMPTY`,
+    {
+      excludeResolved: true,
+      pivot: {
+        rowField: 'priority',
+        columnField: 'status',
+        action: 'sum',
+        valueField: options.storyPointsField,
+      },
+    },
+    issueTypeAllowlist,
+    projectAllowlist
+  );
+
+  // Helper to get bug metrics for a sprint
+  const getBugMetrics = (stats: typeof currentStats, fixed: boolean): SprintReportMetrics => {
+    const targetStatuses = fixed ? fixedStatuses :
+      Object.values(statusGroups).flat().filter(s => !fixedStatuses.includes(s));
+
+    let issues = 0;
+    let storyPoints = 0;
+
+    const pivotData = stats.pivot?.data || {};
+
+    for (const [status, typeData] of Object.entries(pivotData)) {
+      if (fixed ? fixedStatuses.includes(status) : !fixedStatuses.includes(status)) {
+        // Only count Bug type
+        issues += (stats.byTypeAndStatus?.Bug?.[status] || 0);
+        storyPoints += (typeData as Record<string, number>)['Bug'] || 0;
+      }
+    }
+
+    return { issues, storyPoints };
+  };
+
+  // Get bug-specific stats for current sprint
+  const currentBugStats = await getBacklogStats(
+    `project = ${options.projectKey} AND type = Bug`,
+    {
+      sprint: options.sprintId,
+      groupBy: ['status'],
+      pivot: {
+        rowField: 'status',
+        columnField: 'type',
+        action: 'sum',
+        valueField: options.storyPointsField,
+      },
+    },
+    issueTypeAllowlist,
+    projectAllowlist
+  );
+
+  let previousBugStats: typeof currentBugStats | undefined;
+  if (options.previousSprintId) {
+    previousBugStats = await getBacklogStats(
+      `project = ${options.projectKey} AND type = Bug`,
+      {
+        sprint: options.previousSprintId,
+        groupBy: ['status'],
+        pivot: {
+          rowField: 'status',
+          columnField: 'type',
+          action: 'sum',
+          valueField: options.storyPointsField,
+        },
+      },
+      issueTypeAllowlist,
+      projectAllowlist
+    );
+  }
+
+  // Label metrics
+  const labelResults: SprintReportResult['labels'] = {};
+
+  for (const label of options.labelsOfInterest || []) {
+    // Current sprint label stats
+    const currentLabelStats = await getBacklogStats(
+      `project = ${options.projectKey} AND labels = "${label}"`,
+      {
+        sprint: options.sprintId,
+        groupBy: ['status'],
+        pivot: {
+          rowField: 'status',
+          columnField: 'type',
+          action: 'sum',
+          valueField: options.storyPointsField,
+        },
+      },
+      issueTypeAllowlist,
+      projectAllowlist
+    );
+
+    const currentComplete = aggregateStatusGroup(currentLabelStats, doneStatuses);
+    const currentNotComplete = aggregateStatusGroup(
+      currentLabelStats,
+      Object.values(statusGroups).flat().filter(s => !doneStatuses.includes(s))
+    );
+
+    labelResults[label] = {
+      current: {
+        complete: currentComplete,
+        notComplete: currentNotComplete,
+      },
+    };
+
+    // Previous sprint label stats
+    if (options.previousSprintId) {
+      const previousLabelStats = await getBacklogStats(
+        `project = ${options.projectKey} AND labels = "${label}"`,
+        {
+          sprint: options.previousSprintId,
+          groupBy: ['status'],
+          pivot: {
+            rowField: 'status',
+            columnField: 'type',
+            action: 'sum',
+            valueField: options.storyPointsField,
+          },
+        },
+        issueTypeAllowlist,
+        projectAllowlist
+      );
+
+      labelResults[label].previous = {
+        complete: aggregateStatusGroup(previousLabelStats, doneStatuses),
+        notComplete: aggregateStatusGroup(
+          previousLabelStats,
+          Object.values(statusGroups).flat().filter(s => !doneStatuses.includes(s))
+        ),
+      };
+    }
+  }
+
+  return {
+    currentSprint: { id: currentSprint.id, name: currentSprint.name },
+    previousSprint: previousSprint ? { id: previousSprint.id, name: previousSprint.name } : undefined,
+    storyPointsField: options.storyPointsField,
+    storyPointsFieldName,
+    statusGroups: statusGroupResults,
+    triage: triageRow,
+    inflow: inflowRow,
+    bugs: {
+      backlogTotal: {
+        issues: bugBacklogStats.total,
+        storyPoints: bugBacklogStats.pivot?.totals?.grand || 0,
+      },
+      fixedInSprint: {
+        current: getBugMetrics(currentBugStats, true),
+        previous: previousBugStats ? getBugMetrics(previousBugStats, true) : undefined,
+      },
+      notFixedInSprint: {
+        current: getBugMetrics(currentBugStats, false),
+        previous: previousBugStats ? getBugMetrics(previousBugStats, false) : undefined,
+      },
+    },
+    labels: labelResults,
+  };
+}

@@ -359,6 +359,100 @@ export class JiraClient {
     }>>('/rest/api/3/field');
   }
 
+  // Get all labels
+  async getLabels(startAt = 0, maxResults = 1000): Promise<{
+    values: string[];
+    total: number;
+    isLast: boolean;
+  }> {
+    return this.request<{
+      values: string[];
+      total: number;
+      isLast: boolean;
+    }>(`/rest/api/3/label?startAt=${startAt}&maxResults=${maxResults}`);
+  }
+
+  // Get all priorities
+  async getPriorities(): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    iconUrl?: string;
+  }>> {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      description?: string;
+      iconUrl?: string;
+    }>>('/rest/api/3/priority');
+  }
+
+  // Get all statuses
+  async getStatuses(): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    statusCategory: {
+      id: number;
+      key: string;
+      name: string;
+    };
+  }>> {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      description?: string;
+      statusCategory: {
+        id: number;
+        key: string;
+        name: string;
+      };
+    }>>('/rest/api/3/status');
+  }
+
+  // Get all issue types
+  async getIssueTypes(): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    subtask: boolean;
+  }>> {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      description?: string;
+      subtask: boolean;
+    }>>('/rest/api/3/issuetype');
+  }
+
+  // Get all resolutions
+  async getResolutions(): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+  }>> {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      description?: string;
+    }>>('/rest/api/3/resolution');
+  }
+
+  // Get components for a project
+  async getProjectComponents(projectKey: string): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    lead?: { displayName: string; accountId: string };
+  }>> {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      description?: string;
+      lead?: { displayName: string; accountId: string };
+    }>>(`/rest/api/3/project/${projectKey}/components`);
+  }
+
   // Get fields available for creating issues in a project/issue type
   async getCreateMeta(
     projectKey: string,

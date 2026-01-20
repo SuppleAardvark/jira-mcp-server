@@ -9,25 +9,32 @@
 
 export const SCOPES = {
   'boards:read': ['jira_list_boards'],
-  'sprints:read': ['jira_get_active_sprint', 'jira_get_sprint_issues', 'jira_get_my_sprint_issues'],
-  'issues:read': ['jira_get_issue', 'jira_search_issues', 'jira_get_transitions', 'jira_get_issue_history', 'jira_get_backlog_stats', 'jira_get_field_schema', 'jira_debug_search'],
+  'sprints:read': ['jira_get_active_sprint', 'jira_list_sprints', 'jira_get_sprint_issues', 'jira_get_my_sprint_issues', 'jira_get_sprint_report'],
+  'issues:read': ['jira_get_issue', 'jira_search_issues', 'jira_get_transitions', 'jira_get_issue_history', 'jira_get_backlog_stats', 'jira_get_field_schema', 'jira_list_field_values'],
   'issues:write': ['jira_create_issue', 'jira_update_issue', 'jira_transition_issue'],
   'comments:read': ['jira_get_issue_comments'],
   'comments:write': ['jira_add_comment'],
   'attachments:read': ['jira_list_attachments', 'jira_download_attachment'],
   'attachments:write': ['jira_upload_attachment'],
+  'debug': ['jira_debug_search'],
 } as const;
 
 export type Scope = keyof typeof SCOPES;
 
 const ALL_SCOPES = Object.keys(SCOPES) as Scope[];
 
+/** Scopes that must be explicitly enabled (not included when JIRA_SCOPES is unset) */
+const OPT_IN_SCOPES: Scope[] = ['debug'];
+
 /**
- * Get all tool names from all scopes.
+ * Get all tool names from all scopes, excluding opt-in scopes.
  */
-function getAllToolNames(): Set<string> {
+function getDefaultToolNames(): Set<string> {
   const tools = new Set<string>();
-  for (const scopeTools of Object.values(SCOPES)) {
+  for (const [scope, scopeTools] of Object.entries(SCOPES)) {
+    if (OPT_IN_SCOPES.includes(scope as Scope)) {
+      continue;
+    }
     for (const tool of scopeTools) {
       tools.add(tool);
     }
@@ -42,9 +49,9 @@ function getAllToolNames(): Set<string> {
  * @returns Set of allowed tool names
  */
 export function parseScopes(envValue: string | undefined): Set<string> {
-  // If not set or empty, allow all tools
+  // If not set or empty, allow default tools (excludes opt-in scopes like debug)
   if (!envValue || envValue.trim() === '') {
-    return getAllToolNames();
+    return getDefaultToolNames();
   }
 
   const requestedScopes = envValue.split(',').map(s => s.trim()).filter(s => s !== '');

@@ -135,6 +135,36 @@ Get the currently active sprint for a board.
 
 **Returns:** Sprint ID, name, state, dates, and goal.
 
+#### `jira_list_sprints`
+List sprints for a board or project, sorted by most recent first. Supports pagination.
+
+**Parameters:**
+- `boardId` (number, optional) - The board ID. Either `boardId` or `projectKey` is required.
+- `projectKey` (string, optional) - Project key to get sprints from all boards in the project. Either `boardId` or `projectKey` is required.
+- `state` (string, optional) - Filter by state: `active`, `future`, or `closed`. If not specified, returns all sprints.
+- `startAt` (number, optional) - Index of first sprint to return for pagination (default: 0)
+- `maxResults` (number, optional) - Maximum sprints to return (default: 50)
+
+**Returns:** Array of sprints with ID, name, state, dates, goal, and boardId. Also includes pagination info (`total`, `startAt`, `maxResults`, `hasMore`).
+
+**Example - Get recent closed sprints for a project:**
+```json
+{
+  "projectKey": "PROJ",
+  "state": "closed",
+  "maxResults": 10
+}
+```
+
+**Example - Paginate through sprints:**
+```json
+{
+  "boardId": 123,
+  "startAt": 10,
+  "maxResults": 10
+}
+```
+
 #### `jira_get_sprint_issues`
 Get all issues in a sprint.
 
@@ -214,6 +244,39 @@ Get aggregated statistics for issues matching a JQL query without fetching all i
     "action": "sum",
     "valueField": "customfield_10024"
   }
+}
+```
+
+#### `jira_get_sprint_report`
+Generate a sprint report for retrospectives. Returns issue counts and story points grouped by status categories, bug metrics, and label-specific tracking.
+
+**Parameters:**
+- `sprintId` (number, required) - The current sprint ID
+- `projectKey` (string, required) - Project key (e.g., "PROJ")
+- `storyPointsField` (string, required) - Custom field ID for story points (use `jira_get_field_schema` to find this)
+- `previousSprintId` (number, optional) - Previous sprint ID for comparison
+- `labelsOfInterest` (string[], optional) - Labels to track separately (e.g., `["NZ", "TopTen"]`)
+- `statusGroups` (object, optional) - Custom status groupings. Keys are group names, values are arrays of status names.
+- `includeTriage` (boolean, optional) - Include triage metrics (issues created after sprint started). Default: false.
+- `includeInflow` (boolean, optional) - Include inflow metrics (issues pulled from backlog after sprint started). Requires changelog lookups. Default: false.
+
+**Returns:**
+- `statusGroups` - Issue counts and story points for each status group (To Do, Blocked, In Progress, Design Review, To Test, Done)
+- `triage` - (if `includeTriage`) Issues created after the sprint started (new items added mid-sprint)
+- `inflow` - (if `includeInflow`) Pre-existing issues pulled from backlog after the sprint started
+- `bugs.backlogTotal` - Total bugs not in any sprint
+- `bugs.fixedInSprint` - Bugs in Done/Ready to Test status
+- `bugs.notFixedInSprint` - Bugs in other statuses
+- `labels` - For each label of interest: complete vs not complete counts
+
+**Example:**
+```json
+{
+  "sprintId": 616,
+  "previousSprintId": 615,
+  "projectKey": "ED",
+  "storyPointsField": "customfield_10024",
+  "labelsOfInterest": ["NZ", "TopTen"]
 }
 ```
 
@@ -304,6 +367,40 @@ Get available JIRA fields with their IDs, names, and types. Useful for discoveri
 }
 ```
 
+#### `jira_list_field_values`
+List discrete values for a JIRA field. Useful for discovering valid values before creating/updating issues.
+
+**Parameters:**
+- `field` (string, required) - The field to list values for. Options: `labels`, `priorities`, `statuses`, `issueTypes`, `resolutions`, `components`
+- `projectKey` (string, optional) - Project key (required for `components` field)
+- `searchTerm` (string, optional) - Filter values by name (case-insensitive partial match)
+- `maxResults` (number, optional) - Maximum values to return (default: 1000 for labels)
+
+**Returns:** Array of field values with `id` (where applicable), `name`, optional `description`, and field-specific `extra` data (e.g., status categories, icon URLs).
+
+**Example - List all labels:**
+```json
+{
+  "field": "labels"
+}
+```
+
+**Example - List components for a project:**
+```json
+{
+  "field": "components",
+  "projectKey": "PROJ"
+}
+```
+
+**Example - Search statuses:**
+```json
+{
+  "field": "statuses",
+  "searchTerm": "progress"
+}
+```
+
 #### `jira_debug_search`
 Debug tool for exploring raw JIRA data. Returns raw field data and field name mappings.
 
@@ -346,20 +443,21 @@ Use the `JIRA_SCOPES` environment variable to restrict which tools are available
 
 Tools outside the configured scopes are completely hidden from the agent—they won't appear in the tool list and the agent won't know they exist.
 
-**Default behavior:** If `JIRA_SCOPES` is not set or empty, all tools are enabled.
+**Default behavior:** If `JIRA_SCOPES` is not set or empty, all tools are enabled except opt-in scopes like `debug`.
 
 ### Available Scopes
 
 | Scope | Tools |
 |-------|-------|
 | `boards:read` | `jira_list_boards` |
-| `sprints:read` | `jira_get_active_sprint`, `jira_get_sprint_issues`, `jira_get_my_sprint_issues` |
-| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions`, `jira_get_issue_history`, `jira_get_backlog_stats`, `jira_get_field_schema`, `jira_debug_search` |
+| `sprints:read` | `jira_get_active_sprint`, `jira_list_sprints`, `jira_get_sprint_issues`, `jira_get_my_sprint_issues`, `jira_get_sprint_report` |
+| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions`, `jira_get_issue_history`, `jira_get_backlog_stats`, `jira_get_field_schema`, `jira_list_field_values` |
 | `issues:write` | `jira_create_issue`, `jira_update_issue`, `jira_transition_issue` |
 | `comments:read` | `jira_get_issue_comments` |
 | `comments:write` | `jira_add_comment` |
 | `attachments:read` | `jira_list_attachments`, `jira_download_attachment` |
 | `attachments:write` | `jira_upload_attachment` |
+| `debug` | `jira_debug_search` (opt-in, not included by default) |
 
 ### Examples
 
