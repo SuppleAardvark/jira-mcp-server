@@ -303,11 +303,13 @@ export async function searchIssues(
   maxResults = 50,
   issueTypeAllowlist: Set<string> | null,
   projectAllowlist: Set<string> | null,
-  requestedFields?: SearchIssueField[]
+  requestedFields?: SearchIssueField[],
+  pageToken?: string
 ): Promise<{
   issues: SearchIssueResult[];
   total: number;
   hasMore: boolean;
+  nextPageToken?: string;
 }> {
   const client = getJiraClient();
 
@@ -328,25 +330,16 @@ export async function searchIssues(
     jiraFields.push('*all');
   }
 
-  // Collect issues across multiple pages if needed (max 100 per page)
-  const allIssues: typeof response.issues = [];
-  let nextPageToken: string | undefined;
-  let hasMore = false;
+  // Fetch a single page of issues (max 100 per page)
   const pageSize = Math.min(maxResults, 100);
 
-  let response = await client.searchIssues(jql, 0, pageSize, jiraFields);
-  allIssues.push(...response.issues);
+  // Use the incoming pageToken if provided, otherwise start from the beginning
+  const response = await client.searchIssues(jql, 0, pageSize, jiraFields, pageToken);
+  const allIssues = response.issues;
 
-  // Fetch additional pages if needed and available
-  while (allIssues.length < maxResults && response.nextPageToken && !response.isLast) {
-    nextPageToken = response.nextPageToken;
-    const remaining = maxResults - allIssues.length;
-    response = await client.searchIssues(jql, 0, Math.min(remaining, 100), jiraFields, nextPageToken);
-    allIssues.push(...response.issues);
-  }
-
-  // Check if there are more results beyond what we fetched
-  hasMore = !response.isLast && !!response.nextPageToken;
+  // Return pagination info for the caller to continue if needed
+  const hasMore = !response.isLast && !!response.nextPageToken;
+  const nextPageToken = response.nextPageToken;
 
   // Filter results by allowed projects and issue types
   const filteredIssues = allIssues.filter((issue) => {
@@ -435,6 +428,7 @@ export async function searchIssues(
     }),
     total: filteredIssues.length,
     hasMore,
+    nextPageToken,
   };
 }
 

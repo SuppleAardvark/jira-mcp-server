@@ -194,6 +194,10 @@ const allTools = [
             type: 'number',
             description: 'Maximum number of results to return. Defaults to 50 if not specified.',
           },
+          nextPageToken: {
+            type: 'string',
+            description: 'Token for fetching the next page of results. Use the nextPageToken from a previous response to continue pagination.',
+          },
           fields: {
             type: 'array',
             items: {
@@ -755,11 +759,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'jira_search_issues': {
         const jql = args?.jql as string;
         const maxResults = (args?.maxResults as number) || 50;
+        const nextPageToken = args?.nextPageToken as string | undefined;
         const fields = args?.fields as SearchIssueField[] | undefined;
         if (!jql) {
           throw new Error('jql is required');
         }
-        const result = await searchIssues(jql, maxResults, issueTypeAllowlist, projectAllowlist, fields);
+        const result = await searchIssues(jql, maxResults, issueTypeAllowlist, projectAllowlist, fields, nextPageToken);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
