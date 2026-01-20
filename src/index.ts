@@ -18,6 +18,8 @@ import {
   createIssue,
   getIssueHistory,
   getBacklogStats,
+  debugSearch,
+  getFieldSchema,
   type IssueField,
   type SearchIssueField,
 } from './tools/issues.js';
@@ -496,6 +498,53 @@ const allTools = [
         required: ['issueKey', 'filePath'],
       },
     },
+    // Field schema tool
+    {
+      name: 'jira_get_field_schema',
+      description: 'Get available JIRA fields with their IDs, names, and types. Useful for discovering custom field IDs (e.g., finding the ID for "Story Points" to use in stats aggregations). Returns field metadata including schema type.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectKey: {
+            type: 'string',
+            description: 'If provided, only return fields configured for this project. This shows which fields are actually in use, not just all fields in JIRA.',
+          },
+          customOnly: {
+            type: 'boolean',
+            description: 'If true, only return custom fields (excludes built-in fields like summary, status, etc.)',
+          },
+          searchTerm: {
+            type: 'string',
+            description: 'Filter fields by name or ID (case-insensitive). E.g., "story" to find Story Points field.',
+          },
+        },
+      },
+    },
+
+    // Debug tools
+    {
+      name: 'jira_debug_search',
+      description: 'Debug tool for exploring raw JIRA data. Returns raw field data and field name mappings. Useful for finding custom field IDs.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jql: {
+            type: 'string',
+            description: 'JQL query string',
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of issues to return (default: 1)',
+          },
+          fields: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Specific fields to return (omit for all fields)',
+          },
+        },
+        required: ['jql'],
+      },
+    },
   ];
 
 // Define available tools (filtered by permission scopes)
@@ -749,6 +798,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('issueKey and filePath are required');
         }
         const result = await uploadAttachment(issueKey, filePath, issueTypeAllowlist, projectAllowlist);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      // Field schema tool
+      case 'jira_get_field_schema': {
+        const projectKey = args?.projectKey as string | undefined;
+        const customOnly = args?.customOnly as boolean | undefined;
+        const searchTerm = args?.searchTerm as string | undefined;
+        const result = await getFieldSchema({ projectKey, customOnly, searchTerm });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      // Debug tools
+      case 'jira_debug_search': {
+        const jql = args?.jql as string;
+        const maxResults = (args?.maxResults as number) || 1;
+        const fields = args?.fields as string[] | undefined;
+        if (!jql) {
+          throw new Error('jql is required');
+        }
+        const result = await debugSearch(jql, maxResults, fields);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

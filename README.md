@@ -141,8 +141,9 @@ Get all issues in a sprint.
 **Parameters:**
 - `sprintId` (number, required) - The sprint ID
 - `maxResults` (number, optional) - Maximum issues to return (default: 50)
+- `fields` (string[], optional) - Fields to include. Default: `["key", "summary", "status", "statusCategory", "assignee", "priority"]`. Use `"customFields"` to include custom fields.
 
-**Returns:** Issues with keys, summaries, statuses, and assignees.
+**Returns:** Issues with requested fields.
 
 #### `jira_get_my_sprint_issues`
 Get issues assigned to the current user in a sprint.
@@ -150,6 +151,7 @@ Get issues assigned to the current user in a sprint.
 **Parameters:**
 - `sprintId` (number, required) - The sprint ID
 - `maxResults` (number, optional) - Maximum issues to return (default: 200)
+- `fields` (string[], optional) - Fields to include. Default: `["key", "summary", "status", "statusCategory", "assignee", "priority"]`. Use `"customFields"` to include custom fields.
 
 **Returns:** Issues assigned to you, sorted by status then priority.
 
@@ -160,8 +162,9 @@ Get detailed information about an issue.
 
 **Parameters:**
 - `issueKey` (string, required) - The issue key (e.g., "PROJ-123")
+- `fields` (string[], optional) - Fields to include. Default: all fields. Options: `key`, `summary`, `description`, `type`, `status`, `statusCategory`, `priority`, `assignee`, `reporter`, `created`, `updated`, `labels`, `components`, `attachmentCount`, `commentCount`, `parent`, `customFields`.
 
-**Returns:** Full issue details including summary, description, status, assignee, labels, components, parent info, and custom fields (with human-readable field names).
+**Returns:** Issue details with requested fields. Custom fields are returned with human-readable names.
 
 #### `jira_search_issues`
 Search for issues using JQL.
@@ -169,8 +172,9 @@ Search for issues using JQL.
 **Parameters:**
 - `jql` (string, required) - JQL query string
 - `maxResults` (number, optional) - Maximum results (default: 50)
+- `fields` (string[], optional) - Fields to include. Default: `["key", "summary", "status", "statusCategory", "assignee", "type", "parent"]`. Use `"customFields"` to include custom fields.
 
-**Returns:** Issues with keys, summaries, statuses, assignees, and types. Also includes `hasMore` flag indicating if additional results exist beyond `maxResults`.
+**Returns:** Issues with requested fields. Also includes `hasMore` flag indicating if additional results exist beyond `maxResults`.
 
 **Important:** Queries must be bounded with a project filter or other restriction (e.g., assignee, sprint). Unbounded queries like `status = "Open"` are rejected by JIRA's API.
 
@@ -189,8 +193,29 @@ Get aggregated statistics for issues matching a JQL query without fetching all i
 - `issueTypes` (string[], optional) - Filter by issue types (e.g., ["Bug", "Story"])
 - `assignees` (string[], optional) - Filter by assignees (use "unassigned" for unassigned issues)
 - `sprint` (number, optional) - Filter by sprint ID
+- `groupBy` (string[], optional) - Fields to group by. Options: `status`, `type`, `priority`, `assignee`, `reporter`, `labels`, `components`, `resolution`, `project`. If specified, replaces default aggregations.
+- `pivot` (object, optional) - Custom pivot table configuration:
+  - `rowField` (string, required) - Field for pivot rows
+  - `columnField` (string, required) - Field for pivot columns
+  - `action` (string, optional) - Aggregation: `count` (default), `sum`, `avg`, `cardinality`
+  - `valueField` (string, optional) - Field ID for sum/avg (e.g., `customfield_10024` for story points)
+- `fieldFilters` (object[], optional) - Additional field-based filters applied via JQL
 
-**Returns:** Counts grouped by status, type, priority, assignee, and a `byTypeAndStatus` pivot table. Analyzes up to 4000 issues.
+**Returns:** Counts grouped by status, type, priority, assignee, and a `byTypeAndStatus` pivot table. When `pivot` is specified, includes custom pivot results with row/column totals. Analyzes up to 4000 issues.
+
+**Example - Story points by assignee:**
+```json
+{
+  "jql": "project = ED",
+  "sprint": 616,
+  "pivot": {
+    "rowField": "assignee",
+    "columnField": "status",
+    "action": "sum",
+    "valueField": "customfield_10024"
+  }
+}
+```
 
 #### `jira_get_issue_comments`
 Get comments on an issue.
@@ -261,6 +286,34 @@ Get the changelog/history of an issue showing all field changes.
 
 **Returns:** History entries with author, timestamp, and field changes (from/to values).
 
+#### `jira_get_field_schema`
+Get available JIRA fields with their IDs, names, and types. Useful for discovering custom field IDs (e.g., finding the ID for "Story Points" to use in stats aggregations).
+
+**Parameters:**
+- `projectKey` (string, optional) - If provided, only return fields configured for this project. This shows which fields are actually in use, not just all fields in JIRA.
+- `customOnly` (boolean, optional) - If true, only return custom fields
+- `searchTerm` (string, optional) - Filter fields by name or ID (case-insensitive)
+
+**Returns:** Field metadata including ID, name, whether it's custom, and schema type.
+
+**Example - Find story points field for a project:**
+```json
+{
+  "projectKey": "ED",
+  "searchTerm": "story"
+}
+```
+
+#### `jira_debug_search`
+Debug tool for exploring raw JIRA data. Returns raw field data and field name mappings.
+
+**Parameters:**
+- `jql` (string, required) - JQL query string
+- `maxResults` (number, optional) - Maximum issues to return (default: 1)
+- `fields` (string[], optional) - Specific JIRA field IDs to return
+
+**Returns:** Raw issue data with field values and a mapping of field IDs to names.
+
 ### Attachment Tools
 
 #### `jira_list_attachments`
@@ -301,7 +354,7 @@ Tools outside the configured scopes are completely hidden from the agent—they 
 |-------|-------|
 | `boards:read` | `jira_list_boards` |
 | `sprints:read` | `jira_get_active_sprint`, `jira_get_sprint_issues`, `jira_get_my_sprint_issues` |
-| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions`, `jira_get_issue_history`, `jira_get_backlog_stats` |
+| `issues:read` | `jira_get_issue`, `jira_search_issues`, `jira_get_transitions`, `jira_get_issue_history`, `jira_get_backlog_stats`, `jira_get_field_schema`, `jira_debug_search` |
 | `issues:write` | `jira_create_issue`, `jira_update_issue`, `jira_transition_issue` |
 | `comments:read` | `jira_get_issue_comments` |
 | `comments:write` | `jira_add_comment` |

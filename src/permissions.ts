@@ -10,7 +10,7 @@
 export const SCOPES = {
   'boards:read': ['jira_list_boards'],
   'sprints:read': ['jira_get_active_sprint', 'jira_get_sprint_issues', 'jira_get_my_sprint_issues'],
-  'issues:read': ['jira_get_issue', 'jira_search_issues', 'jira_get_transitions', 'jira_get_issue_history', 'jira_get_backlog_stats'],
+  'issues:read': ['jira_get_issue', 'jira_search_issues', 'jira_get_transitions', 'jira_get_issue_history', 'jira_get_backlog_stats', 'jira_get_field_schema', 'jira_debug_search'],
   'issues:write': ['jira_create_issue', 'jira_update_issue', 'jira_transition_issue'],
   'comments:read': ['jira_get_issue_comments'],
   'comments:write': ['jira_add_comment'],

@@ -330,6 +330,82 @@ export class JiraClient {
     };
   }
 
+  // Field metadata
+  async getFields(): Promise<Array<{
+    id: string;
+    name: string;
+    custom: boolean;
+    searchable?: boolean;
+    navigable?: boolean;
+    schema?: {
+      type: string;
+      items?: string;
+      custom?: string;
+      customId?: number;
+    };
+  }>> {
+    return this.request<Array<{
+      id: string;
+      name: string;
+      custom: boolean;
+      searchable?: boolean;
+      navigable?: boolean;
+      schema?: {
+        type: string;
+        items?: string;
+        custom?: string;
+        customId?: number;
+      };
+    }>>('/rest/api/3/field');
+  }
+
+  // Get fields available for creating issues in a project/issue type
+  async getCreateMeta(
+    projectKey: string,
+    issueTypeId?: string
+  ): Promise<{
+    fields: Record<string, {
+      required: boolean;
+      name: string;
+      fieldId: string;
+      schema: {
+        type: string;
+        items?: string;
+        custom?: string;
+        customId?: number;
+      };
+      allowedValues?: Array<{ id: string; name: string; value?: string }>;
+    }>;
+  }> {
+    // First get issue types for the project
+    if (!issueTypeId) {
+      const projectMeta = await this.request<{
+        issueTypes: Array<{ id: string; name: string }>;
+      }>(`/rest/api/3/issue/createmeta/${projectKey}/issuetypes`);
+      // Use first issue type if not specified
+      issueTypeId = projectMeta.issueTypes[0]?.id;
+    }
+
+    if (!issueTypeId) {
+      throw new Error(`No issue types found for project ${projectKey}`);
+    }
+
+    return this.request<{
+      fields: Record<string, {
+        required: boolean;
+        name: string;
+        fieldId: string;
+        schema: {
+          type: string;
+          items?: string;
+          custom?: string;
+          customId?: number;
+        };
+        allowedValues?: Array<{ id: string; name: string; value?: string }>;
+      }>;
+    }>(`/rest/api/3/issue/createmeta/${projectKey}/issuetypes/${issueTypeId}`);
+  }
+
   async uploadAttachment(
     issueKey: string,
     filePath: string

@@ -187,7 +187,11 @@ export async function getIssue(
   const needsCustomFields = fieldsToReturn.includes('customFields');
 
   const client = getJiraClient();
-  const issue = await client.getIssue(issueKey, ['renderedFields', 'names']);
+
+  // Fetch issue and field names in parallel if needed
+  const issuePromise = client.getIssue(issueKey, ['renderedFields']);
+  const fieldNamesPromise = needsCustomFields ? client.getFields() : Promise.resolve([]);
+  const [issue, allFields] = await Promise.all([issuePromise, fieldNamesPromise]);
 
   // Check if issue type is allowed
   if (!isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)) {
@@ -195,7 +199,10 @@ export async function getIssue(
   }
 
   const fields = issue.fields as unknown as Record<string, unknown>;
-  const fieldNames = (issue as unknown as { names?: Record<string, string> }).names || {};
+  const fieldNames: Record<string, string> = {};
+  for (const field of allFields) {
+    fieldNames[field.id] = field.name;
+  }
 
   // Build result based on requested fields
   const result: IssueDetails = { key: issue.key };
@@ -351,8 +358,11 @@ export async function searchIssues(
   // Get field names if custom fields are requested
   let fieldNames: Record<string, string> | undefined;
   if (needsCustomFields && filteredIssues.length > 0) {
-    const sampleResponse = await client.getIssue(filteredIssues[0].key, ['names']);
-    fieldNames = (sampleResponse as unknown as { names?: Record<string, string> }).names;
+    const allFields = await client.getFields();
+    fieldNames = {};
+    for (const field of allFields) {
+      fieldNames[field.id] = field.name;
+    }
   }
 
   return {
@@ -851,7 +861,7 @@ export async function getBacklogStats(
   }
 
   // Track if we need custom fields (requires fetching all fields)
-  let needsAllFields = false;
+  // Note: needsAllFields was removed - we now explicitly add custom fields to fieldsNeeded
 
   if (options.pivot) {
     const addPivotField = (f: StatsField) => {
@@ -864,12 +874,8 @@ export async function getBacklogStats(
     addPivotField(options.pivot.rowField);
     addPivotField(options.pivot.columnField);
     if (options.pivot.valueField) {
-      // Custom fields require fetching all fields from JIRA
-      if (options.pivot.valueField.startsWith('customfield_')) {
-        needsAllFields = true;
-      } else {
-        fieldsNeeded.add(options.pivot.valueField);
-      }
+      // Add the value field (custom or standard) to the fields list
+      fieldsNeeded.add(options.pivot.valueField);
     }
   }
 
@@ -903,14 +909,25 @@ export async function getBacklogStats(
   let fieldNames: Record<string, string> = {};
   let resolvedValueFieldName: string | undefined;
 
+  // Fetch field names upfront if needed
+  if (needsFieldNames) {
+    const allFields = await client.getFields();
+    for (const field of allFields) {
+      fieldNames[field.id] = field.name;
+    }
+    if (options.pivot?.valueField) {
+      resolvedValueFieldName = fieldNames[options.pivot.valueField] || options.pivot.valueField;
+    }
+  }
+
   const pageSize = 100;
   let totalFromJira = 0;
   let analyzed = 0;
   let pageCount = 0;
   let nextPageToken: string | undefined;
 
-  // Determine fields to fetch - use *all for custom fields, otherwise specific fields
-  const searchFields = needsAllFields ? ['*all'] : Array.from(fieldsNeeded);
+  // Determine fields to fetch
+  const searchFields = Array.from(fieldsNeeded);
 
   // Fetch up to 4000 issues across multiple pages using token-based pagination
   while (pageCount < 40) { // 40 pages * 100 = 4000 max
@@ -921,15 +938,6 @@ export async function getBacklogStats(
 
     if (response.issues.length === 0) {
       break;
-    }
-
-    // Fetch field names on first page if needed
-    if (pageCount === 0 && needsFieldNames && response.issues.length > 0) {
-      const sampleIssue = await client.getIssue(response.issues[0].key, ['names']);
-      fieldNames = (sampleIssue as unknown as { names?: Record<string, string> }).names || {};
-      if (options.pivot?.valueField) {
-        resolvedValueFieldName = fieldNames[options.pivot.valueField] || options.pivot.valueField;
-      }
     }
 
     // Filter and aggregate
@@ -1140,6 +1148,156 @@ export async function getBacklogStats(
   }
 
   return result;
+}
+
+/**
+ * Debug search tool - returns raw JIRA data for exploration.
+ * Useful for finding field IDs and understanding data structure.
+ */
+export async function debugSearch(
+  jql: string,
+  maxResults = 1,
+  fields?: string[]
+): Promise<{
+  issues: Array<{
+    key: string;
+    fields: Record<string, unknown>;
+  }>;
+  fieldNames?: Record<string, string>;
+}> {
+  const client = getJiraClient();
+
+  // Fetch issues and field metadata in parallel
+  const [response, allFields] = await Promise.all([
+    client.searchIssues(jql, 0, maxResults, fields),
+    client.getFields(),
+  ]);
+
+  // Build field name mapping
+  const fieldNames: Record<string, string> = {};
+  for (const field of allFields) {
+    fieldNames[field.id] = field.name;
+  }
+
+  return {
+    issues: response.issues.map(issue => ({
+      key: issue.key,
+      fields: issue.fields as unknown as Record<string, unknown>,
+    })),
+    fieldNames,
+  };
+}
+
+interface FieldSchemaResult {
+  fields: Array<{
+    id: string;
+    name: string;
+    custom: boolean;
+    required?: boolean;
+    searchable?: boolean;
+    navigable?: boolean;
+    schema?: {
+      type: string;
+      items?: string;
+      custom?: string;
+      customId?: number;
+    };
+  }>;
+  total: number;
+  projectKey?: string;
+}
+
+/**
+ * Get field schema - returns available JIRA fields with their IDs, names, and types.
+ * If projectKey is provided, returns only fields configured for that project.
+ * Useful for discovering custom field IDs (e.g., finding the ID for "Story Points").
+ */
+export async function getFieldSchema(options?: {
+  customOnly?: boolean;
+  searchTerm?: string;
+  projectKey?: string;
+}): Promise<FieldSchemaResult> {
+  const client = getJiraClient();
+
+  // If project key provided, get fields from create meta (shows fields in use for that project)
+  if (options?.projectKey) {
+    const meta = await client.getCreateMeta(options.projectKey);
+
+    let fields = Object.values(meta.fields).map((field) => ({
+      id: field.fieldId,
+      name: field.name,
+      custom: field.fieldId.startsWith('customfield_'),
+      required: field.required,
+      schema: field.schema,
+    }));
+
+    // Filter to custom fields only if requested
+    if (options?.customOnly) {
+      fields = fields.filter(f => f.custom);
+    }
+
+    // Filter by search term if provided
+    if (options?.searchTerm) {
+      const term = options.searchTerm.toLowerCase();
+      fields = fields.filter(f =>
+        f.name.toLowerCase().includes(term) ||
+        f.id.toLowerCase().includes(term)
+      );
+    }
+
+    // Sort by name
+    fields.sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      projectKey: options.projectKey,
+      fields,
+      total: fields.length,
+    };
+  }
+
+  // No project key - return all fields from global field list
+  const allFields = await client.getFields();
+
+  let filtered = allFields;
+
+  // Filter to custom fields only if requested
+  if (options?.customOnly) {
+    filtered = filtered.filter(f => f.custom);
+  }
+
+  // Filter by search term (case-insensitive match on name or id)
+  if (options?.searchTerm) {
+    const term = options.searchTerm.toLowerCase();
+    filtered = filtered.filter(f =>
+      f.name.toLowerCase().includes(term) ||
+      f.id.toLowerCase().includes(term)
+    );
+  }
+
+  // Sort by name for easier reading
+  filtered.sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    fields: filtered.map(f => {
+      const extended = f as Record<string, unknown>;
+      const result: FieldSchemaResult['fields'][0] = {
+        id: f.id,
+        name: f.name,
+        custom: f.custom,
+      };
+      if (extended.searchable !== undefined) {
+        result.searchable = extended.searchable as boolean;
+      }
+      if (extended.navigable !== undefined) {
+        result.navigable = extended.navigable as boolean;
+      }
+      if (extended.schema) {
+        result.schema = extended.schema as { type: string; items?: string; custom?: string; customId?: number };
+      }
+      return result;
+    }),
+    total: filtered.length,
+  };
 }
 
 export async function getIssueHistory(
