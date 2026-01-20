@@ -434,8 +434,8 @@ export async function getBacklogStats(
   let totalFromJira = 0;
   let analyzed = 0;
 
-  // Fetch up to 1000 issues across multiple pages
-  while (startAt < 1000) {
+  // Fetch up to 2000 issues across multiple pages
+  while (startAt < 2000) {
     const response = await client.searchIssues(jql, startAt, pageSize, [
       'status',
       'issuetype',
