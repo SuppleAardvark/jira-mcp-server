@@ -17,6 +17,7 @@ import {
   addComment,
   createIssue,
   getIssueHistory,
+  getBacklogStats,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
 import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist, parseProjectAllowlist } from './permissions.js';
@@ -131,6 +132,20 @@ const allTools = [
           maxResults: {
             type: 'number',
             description: 'Maximum number of results to return. Defaults to 50 if not specified.',
+          },
+        },
+        required: ['jql'],
+      },
+    },
+    {
+      name: 'jira_get_backlog_stats',
+      description: 'Get aggregated statistics for issues matching a JQL query. Returns counts grouped by status, type, priority, and assignee. Useful for quick backlog overview without paginating through all issues.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jql: {
+            type: 'string',
+            description: 'JQL query string (e.g., "project = PROJ")',
           },
         },
         required: ['jql'],
@@ -443,6 +458,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('jql is required');
         }
         const result = await searchIssues(jql, maxResults, issueTypeAllowlist, projectAllowlist);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'jira_get_backlog_stats': {
+        const jql = args?.jql as string;
+        if (!jql) {
+          throw new Error('jql is required');
+        }
+        const result = await getBacklogStats(jql, projectAllowlist, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

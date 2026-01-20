@@ -409,6 +409,64 @@ export async function createIssue(
   };
 }
 
+export async function getBacklogStats(
+  jql: string,
+  projectAllowlist: Set<string> | null,
+  issueTypeAllowlist: Set<string> | null
+): Promise<{
+  total: number;
+  byStatus: Record<string, number>;
+  byType: Record<string, number>;
+  byPriority: Record<string, number>;
+  byAssignee: Record<string, number>;
+}> {
+  const client = getJiraClient();
+
+  // Fetch issues with minimal fields for aggregation
+  // Use a high limit to get good stats in one call
+  const response = await client.searchIssues(jql, 0, 1000, [
+    'status',
+    'issuetype',
+    'priority',
+    'assignee',
+  ]);
+
+  // Filter by allowlists
+  const filteredIssues = response.issues.filter((issue) => {
+    const projectKey = getProjectFromIssueKey(issue.key);
+    return isProjectAllowed(projectKey, projectAllowlist) &&
+      isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist);
+  });
+
+  // Aggregate counts
+  const byStatus: Record<string, number> = {};
+  const byType: Record<string, number> = {};
+  const byPriority: Record<string, number> = {};
+  const byAssignee: Record<string, number> = {};
+
+  for (const issue of filteredIssues) {
+    const status = issue.fields.status.name;
+    byStatus[status] = (byStatus[status] || 0) + 1;
+
+    const type = issue.fields.issuetype.name;
+    byType[type] = (byType[type] || 0) + 1;
+
+    const priority = issue.fields.priority?.name || 'None';
+    byPriority[priority] = (byPriority[priority] || 0) + 1;
+
+    const assignee = issue.fields.assignee?.displayName || 'Unassigned';
+    byAssignee[assignee] = (byAssignee[assignee] || 0) + 1;
+  }
+
+  return {
+    total: filteredIssues.length,
+    byStatus,
+    byType,
+    byPriority,
+    byAssignee,
+  };
+}
+
 export async function getIssueHistory(
   issueKey: string,
   maxResults = 100,
