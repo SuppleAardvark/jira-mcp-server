@@ -411,6 +411,12 @@ export async function createIssue(
 
 export async function getBacklogStats(
   jql: string,
+  options: {
+    excludeResolved?: boolean;
+    issueTypes?: string[];
+    assignees?: string[];
+    sprint?: number;
+  },
   projectAllowlist: Set<string> | null,
   issueTypeAllowlist: Set<string> | null
 ): Promise<{
@@ -423,6 +429,29 @@ export async function getBacklogStats(
 }> {
   const client = getJiraClient();
 
+  // Build JQL with filters
+  let finalJql = jql;
+
+  if (options.excludeResolved) {
+    finalJql += ' AND resolution IS EMPTY';
+  }
+
+  if (options.issueTypes && options.issueTypes.length > 0) {
+    const types = options.issueTypes.map(t => `"${t}"`).join(', ');
+    finalJql += ` AND issuetype IN (${types})`;
+  }
+
+  if (options.assignees && options.assignees.length > 0) {
+    const assigneeFilters = options.assignees.map(a =>
+      a.toLowerCase() === 'unassigned' ? 'assignee IS EMPTY' : `assignee = "${a}"`
+    );
+    finalJql += ` AND (${assigneeFilters.join(' OR ')})`;
+  }
+
+  if (options.sprint) {
+    finalJql += ` AND sprint = ${options.sprint}`;
+  }
+
   // Aggregate counts across multiple pages
   const byStatus: Record<string, number> = {};
   const byType: Record<string, number> = {};
@@ -434,9 +463,9 @@ export async function getBacklogStats(
   let totalFromJira = 0;
   let analyzed = 0;
 
-  // Fetch up to 2000 issues across multiple pages
-  while (startAt < 2000) {
-    const response = await client.searchIssues(jql, startAt, pageSize, [
+  // Fetch up to 4000 issues across multiple pages
+  while (startAt < 4000) {
+    const response = await client.searchIssues(finalJql, startAt, pageSize, [
       'status',
       'issuetype',
       'priority',

@@ -147,6 +147,24 @@ const allTools = [
             type: 'string',
             description: 'JQL query string (e.g., "project = PROJ")',
           },
+          excludeResolved: {
+            type: 'boolean',
+            description: 'Exclude resolved/done issues (adds "resolution IS EMPTY" to JQL)',
+          },
+          issueTypes: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Filter by issue types (e.g., ["Bug", "Story"])',
+          },
+          assignees: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Filter by assignees (use "unassigned" for unassigned issues)',
+          },
+          sprint: {
+            type: 'number',
+            description: 'Filter by sprint ID',
+          },
         },
         required: ['jql'],
       },
@@ -468,7 +486,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!jql) {
           throw new Error('jql is required');
         }
-        const result = await getBacklogStats(jql, projectAllowlist, issueTypeAllowlist);
+        const options = {
+          excludeResolved: args?.excludeResolved as boolean | undefined,
+          issueTypes: args?.issueTypes as string[] | undefined,
+          assignees: args?.assignees as string[] | undefined,
+          sprint: args?.sprint as number | undefined,
+        };
+        const result = await getBacklogStats(jql, options, projectAllowlist, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
