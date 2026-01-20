@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type {
+  JiraBoard,
   JiraBoardsResponse,
+  JiraSprint,
   JiraSprintsResponse,
   JiraSprintIssuesResponse,
   JiraIssue,
@@ -115,7 +117,15 @@ export class JiraClient {
     );
   }
 
+  async getBoard(boardId: number): Promise<JiraBoard> {
+    return this.request<JiraBoard>(`/rest/agile/1.0/board/${boardId}`);
+  }
+
   // Sprint operations
+  async getSprint(sprintId: number): Promise<JiraSprint> {
+    return this.request<JiraSprint>(`/rest/agile/1.0/sprint/${sprintId}`);
+  }
+
   async getSprintsForBoard(
     boardId: number,
     state?: 'active' | 'future' | 'closed',

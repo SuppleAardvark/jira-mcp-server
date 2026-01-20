@@ -1,14 +1,21 @@
 import { getJiraClient } from '../jira-client.js';
 import type { AttachmentSummary } from '../types.js';
+import { isIssueTypeAllowed } from '../permissions.js';
 
 export async function listAttachments(
-  issueKey: string
+  issueKey: string,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   attachments: AttachmentSummary[];
 }> {
   const client = getJiraClient();
   const issue = await client.getIssue(issueKey);
+
+  // Check if issue type is allowed
+  if (!isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
 
   return {
     issueKey,
@@ -31,18 +38,29 @@ export async function downloadAttachment(
   path: string;
   size: number;
 }> {
+  // Note: downloadAttachment doesn't filter by issue type since we only have
+  // the attachment ID. The attachment ID would need to come from listAttachments
+  // which already applies issue type filtering.
   const client = getJiraClient();
   return client.downloadAttachment(attachmentId, outputPath);
 }
 
 export async function uploadAttachment(
   issueKey: string,
-  filePath: string
+  filePath: string,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   attachments: AttachmentSummary[];
 }> {
+  // Verify issue type is allowed
   const client = getJiraClient();
+  const issue = await client.getIssue(issueKey);
+
+  if (!isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
+
   const uploaded = await client.uploadAttachment(issueKey, filePath);
 
   return {

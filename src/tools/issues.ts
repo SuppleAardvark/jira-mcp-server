@@ -6,6 +6,33 @@ import type {
   JiraDocumentNode,
   CreateIssueResult,
 } from '../types.js';
+import { isIssueTypeAllowed } from '../permissions.js';
+
+/**
+ * Verify that an issue's type is allowed, throwing an error if not.
+ * Returns the issue type name for convenience.
+ */
+async function verifyIssueTypeAllowed(
+  issueKey: string,
+  issueTypeAllowlist: Set<string> | null
+): Promise<string> {
+  if (issueTypeAllowlist === null) {
+    // No restrictions, but we still need to fetch the type for consistency
+    const client = getJiraClient();
+    const issue = await client.getIssue(issueKey);
+    return issue.fields.issuetype.name;
+  }
+
+  const client = getJiraClient();
+  const issue = await client.getIssue(issueKey);
+  const typeName = issue.fields.issuetype.name;
+
+  if (!isIssueTypeAllowed(typeName, issueTypeAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
+
+  return typeName;
+}
 
 // Convert Atlassian Document Format to plain text
 export function adfToText(doc: JiraDocument | string | undefined): string {
@@ -62,9 +89,17 @@ export function extractParent(fields: Record<string, unknown>): IssueDetails['pa
   return undefined;
 }
 
-export async function getIssue(issueKey: string): Promise<IssueDetails> {
+export async function getIssue(
+  issueKey: string,
+  issueTypeAllowlist: Set<string> | null
+): Promise<IssueDetails> {
   const client = getJiraClient();
   const issue = await client.getIssue(issueKey, ['renderedFields']);
+
+  // Check if issue type is allowed
+  if (!isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
 
   const parent = extractParent(issue.fields as unknown as Record<string, unknown>);
 
@@ -90,7 +125,8 @@ export async function getIssue(issueKey: string): Promise<IssueDetails> {
 
 export async function searchIssues(
   jql: string,
-  maxResults = 50
+  maxResults = 50,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{
   issues: Array<{
     key: string;
@@ -112,8 +148,13 @@ export async function searchIssues(
     'parent',
   ]);
 
+  // Filter results by allowed issue types
+  const filteredIssues = response.issues.filter((issue) =>
+    isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)
+  );
+
   return {
-    issues: response.issues.map((issue) => {
+    issues: filteredIssues.map((issue) => {
       const parent = extractParent(issue.fields as unknown as Record<string, unknown>);
       return {
         key: issue.key,
@@ -125,18 +166,22 @@ export async function searchIssues(
         parent: parent ? { key: parent.key, summary: parent.summary } : undefined,
       };
     }),
-    total: response.total,
+    total: filteredIssues.length,
   };
 }
 
 export async function getIssueComments(
   issueKey: string,
-  maxResults = 20
+  maxResults = 20,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   comments: CommentSummary[];
   total: number;
 }> {
+  // Verify issue type is allowed
+  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+
   const client = getJiraClient();
   const response = await client.getIssueComments(issueKey, 0, maxResults);
 
@@ -160,8 +205,12 @@ export async function updateIssue(
     assignee?: string; // accountId
     priority?: string; // priority name or id
     labels?: string[];
-  }
+  },
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{ success: boolean; issueKey: string }> {
+  // Verify issue type is allowed
+  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+
   const client = getJiraClient();
 
   // Build fields object
@@ -202,7 +251,8 @@ export async function updateIssue(
 }
 
 export async function getTransitions(
-  issueKey: string
+  issueKey: string,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   transitions: Array<{
@@ -212,6 +262,9 @@ export async function getTransitions(
     toStatusCategory: string;
   }>;
 }> {
+  // Verify issue type is allowed
+  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+
   const client = getJiraClient();
   const response = await client.getTransitions(issueKey);
 
@@ -229,8 +282,12 @@ export async function getTransitions(
 export async function transitionIssue(
   issueKey: string,
   transitionId: string,
-  comment?: string
+  comment: string | undefined,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{ success: boolean; issueKey: string; transitionId: string }> {
+  // Verify issue type is allowed
+  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+
   const client = getJiraClient();
 
   await client.transitionIssue(issueKey, transitionId, undefined, comment);
@@ -240,8 +297,12 @@ export async function transitionIssue(
 
 export async function addComment(
   issueKey: string,
-  body: string
+  body: string,
+  issueTypeAllowlist: Set<string> | null
 ): Promise<{ success: boolean; issueKey: string; commentId: string }> {
+  // Verify issue type is allowed
+  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+
   const client = getJiraClient();
 
   const comment = await client.addComment(issueKey, body);
@@ -249,17 +310,25 @@ export async function addComment(
   return { success: true, issueKey, commentId: comment.id };
 }
 
-export async function createIssue(options: {
-  projectKey: string;
-  summary: string;
-  issueType: string;
-  description?: string;
-  priority?: string;
-  labels?: string[];
-  assignee?: string; // accountId
-  parent?: string; // parent issue key (for subtasks or linking to epics)
-  components?: string[];
-}): Promise<CreateIssueResult> {
+export async function createIssue(
+  options: {
+    projectKey: string;
+    summary: string;
+    issueType: string;
+    description?: string;
+    priority?: string;
+    labels?: string[];
+    assignee?: string; // accountId
+    parent?: string; // parent issue key (for subtasks or linking to epics)
+    components?: string[];
+  },
+  issueTypeAllowlist: Set<string> | null
+): Promise<CreateIssueResult> {
+  // Check if issue type is allowed
+  if (!isIssueTypeAllowed(options.issueType, issueTypeAllowlist)) {
+    throw new Error(`Invalid issue type: ${options.issueType}`);
+  }
+
   const client = getJiraClient();
 
   // Build fields object

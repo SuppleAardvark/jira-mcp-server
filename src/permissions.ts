@@ -74,3 +74,110 @@ export function parseScopes(envValue: string | undefined): Set<string> {
 export function isToolAllowed(toolName: string, allowedTools: Set<string>): boolean {
   return allowedTools.has(toolName);
 }
+
+/**
+ * Parsed allowlist that can match by ID or name.
+ */
+export interface Allowlist {
+  /** If null, all items are allowed */
+  ids: Set<number> | null;
+  names: Set<string> | null;
+}
+
+/**
+ * Parse an allowlist environment variable that can contain IDs or names.
+ * Returns null sets if the allowlist is not configured (meaning all allowed).
+ *
+ * @param envValue - Comma-separated list of IDs or names
+ * @returns Allowlist with separate sets for numeric IDs and string names
+ */
+export function parseAllowlist(envValue: string | undefined): Allowlist {
+  if (!envValue || envValue.trim() === '') {
+    return { ids: null, names: null };
+  }
+
+  const ids = new Set<number>();
+  const names = new Set<string>();
+
+  const items = envValue.split(',').map(s => s.trim()).filter(s => s !== '');
+
+  for (const item of items) {
+    const asNumber = parseInt(item, 10);
+    if (!isNaN(asNumber) && asNumber.toString() === item) {
+      ids.add(asNumber);
+    } else {
+      // Case-insensitive matching for names
+      names.add(item.toLowerCase());
+    }
+  }
+
+  return { ids, names };
+}
+
+/**
+ * Check if a board is allowed by the allowlist.
+ *
+ * @param boardId - The board's numeric ID
+ * @param boardName - The board's name
+ * @param allowlist - The parsed allowlist
+ * @returns true if the board is allowed (or if no allowlist is configured)
+ */
+export function isBoardAllowed(
+  boardId: number,
+  boardName: string,
+  allowlist: Allowlist
+): boolean {
+  // If no allowlist configured, all boards are allowed
+  if (allowlist.ids === null && allowlist.names === null) {
+    return true;
+  }
+
+  // Check if board matches by ID or name
+  if (allowlist.ids?.has(boardId)) {
+    return true;
+  }
+  if (allowlist.names?.has(boardName.toLowerCase())) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Parse the issue types allowlist environment variable.
+ * Returns null if not configured (meaning all types allowed).
+ *
+ * @param envValue - Comma-separated list of issue type names
+ * @returns Set of lowercase issue type names, or null if all allowed
+ */
+export function parseIssueTypesAllowlist(envValue: string | undefined): Set<string> | null {
+  if (!envValue || envValue.trim() === '') {
+    return null;
+  }
+
+  const types = new Set<string>();
+  const items = envValue.split(',').map(s => s.trim()).filter(s => s !== '');
+
+  for (const item of items) {
+    types.add(item.toLowerCase());
+  }
+
+  return types;
+}
+
+/**
+ * Check if an issue type is allowed by the allowlist.
+ *
+ * @param issueType - The issue type name
+ * @param allowlist - The parsed allowlist (null means all allowed)
+ * @returns true if the issue type is allowed
+ */
+export function isIssueTypeAllowed(
+  issueType: string,
+  allowlist: Set<string> | null
+): boolean {
+  if (allowlist === null) {
+    return true;
+  }
+  return allowlist.has(issueType.toLowerCase());
+}

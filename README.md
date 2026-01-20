@@ -42,9 +42,15 @@ export JIRA_API_TOKEN="your-api-token"
 ```bash
 # Restrict which tools are available (comma-separated scopes)
 export JIRA_SCOPES="boards:read,sprints:read,issues:read"
+
+# Restrict access to specific boards (by ID or name)
+export JIRA_ALLOWED_BOARDS="123,My Project Board"
+
+# Restrict access to specific issue types
+export JIRA_ALLOWED_ISSUE_TYPES="Bug,Task,Story"
 ```
 
-See [Permission Scopes](#permission-scopes) for details.
+See [Permission Scopes](#permission-scopes) and [Resource Allowlists](#resource-allowlists) for details.
 
 ### 3. Configure MCP Client
 
@@ -288,6 +294,72 @@ JIRA_SCOPES="boards:read,sprints:read,issues:read,issues:write,comments:read,com
 ```
 
 Invalid scope names are logged as warnings and ignored.
+
+## Resource Allowlists
+
+In addition to tool-level scopes, you can restrict access to specific boards and issue types using allowlists. Resources outside the allowlist are hidden from the agent.
+
+### Board Allowlist
+
+Use `JIRA_ALLOWED_BOARDS` to restrict which boards (and their sprints) the agent can access.
+
+```bash
+# By board ID
+JIRA_ALLOWED_BOARDS="123,456"
+
+# By board name (case-insensitive)
+JIRA_ALLOWED_BOARDS="Project Alpha,Project Beta"
+
+# Mix of IDs and names
+JIRA_ALLOWED_BOARDS="123,Project Beta"
+```
+
+**Behavior:**
+- `jira_list_boards` returns only allowed boards
+- `jira_get_active_sprint` fails for non-allowed boards
+- `jira_get_sprint_issues` and `jira_get_my_sprint_issues` fail for sprints on non-allowed boards
+- If not set, all boards are accessible
+
+### Issue Type Allowlist
+
+Use `JIRA_ALLOWED_ISSUE_TYPES` to restrict which issue types the agent can access.
+
+```bash
+# Allow only bugs and tasks
+JIRA_ALLOWED_ISSUE_TYPES="Bug,Task"
+
+# Allow common work items (case-insensitive)
+JIRA_ALLOWED_ISSUE_TYPES="bug,task,story,sub-task"
+```
+
+**Behavior:**
+- `jira_get_issue` fails for issues of non-allowed types
+- `jira_search_issues` filters out issues of non-allowed types
+- `jira_create_issue` fails when trying to create non-allowed types
+- All issue operations (update, transition, comment, attachments) fail for non-allowed types
+- If not set, all issue types are accessible
+
+### Combined Example
+
+Restrict agent to only view bugs and tasks on a specific project board:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "jira-mcp-server",
+      "env": {
+        "JIRA_BASE_URL": "https://your-domain.atlassian.net",
+        "JIRA_EMAIL": "your-email@example.com",
+        "JIRA_API_TOKEN": "your-api-token",
+        "JIRA_SCOPES": "boards:read,sprints:read,issues:read",
+        "JIRA_ALLOWED_BOARDS": "Project Alpha",
+        "JIRA_ALLOWED_ISSUE_TYPES": "Bug,Task"
+      }
+    }
+  }
+}
+```
 
 ## Example Usage
 

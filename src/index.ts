@@ -18,10 +18,14 @@ import {
   createIssue,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
-import { parseScopes, isToolAllowed } from './permissions.js';
+import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist } from './permissions.js';
 
 // Parse permission scopes from environment variable
 const allowedTools = parseScopes(process.env.JIRA_SCOPES);
+
+// Parse board and issue type allowlists
+const boardAllowlist = parseAllowlist(process.env.JIRA_ALLOWED_BOARDS);
+const issueTypeAllowlist = parseIssueTypesAllowlist(process.env.JIRA_ALLOWED_ISSUE_TYPES);
 
 const server = new Server(
   {
@@ -359,7 +363,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       // Sprint tools
       case 'jira_list_boards': {
-        const result = await listBoards();
+        const result = await listBoards(boardAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -370,7 +374,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!boardId) {
           throw new Error('boardId is required');
         }
-        const result = await getActiveSprint(boardId);
+        const result = await getActiveSprint(boardId, boardAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -382,7 +386,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!sprintId) {
           throw new Error('sprintId is required');
         }
-        const result = await getSprintIssues(sprintId, maxResults);
+        const result = await getSprintIssues(sprintId, maxResults, boardAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -394,7 +398,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!sprintId) {
           throw new Error('sprintId is required');
         }
-        const result = await getMySprintIssues(sprintId, maxResults);
+        const result = await getMySprintIssues(sprintId, maxResults, boardAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -406,7 +410,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getIssue(issueKey);
+        const result = await getIssue(issueKey, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -418,7 +422,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!jql) {
           throw new Error('jql is required');
         }
-        const result = await searchIssues(jql, maxResults);
+        const result = await searchIssues(jql, maxResults, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -430,7 +434,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getIssueComments(issueKey, maxResults);
+        const result = await getIssueComments(issueKey, maxResults, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -454,7 +458,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args?.priority !== undefined) updates.priority = args.priority as string;
         if (args?.labels !== undefined) updates.labels = args.labels as string[];
 
-        const result = await updateIssue(issueKey, updates);
+        const result = await updateIssue(issueKey, updates, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -465,7 +469,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getTransitions(issueKey);
+        const result = await getTransitions(issueKey, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -478,7 +482,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey || !transitionId) {
           throw new Error('issueKey and transitionId are required');
         }
-        const result = await transitionIssue(issueKey, transitionId, comment);
+        const result = await transitionIssue(issueKey, transitionId, comment, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -490,7 +494,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey || !body) {
           throw new Error('issueKey and body are required');
         }
-        const result = await addComment(issueKey, body);
+        const result = await addComment(issueKey, body, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -513,7 +517,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           assignee: args?.assignee as string | undefined,
           parent: args?.parent as string | undefined,
           components: args?.components as string[] | undefined,
-        });
+        }, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -525,7 +529,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await listAttachments(issueKey);
+        const result = await listAttachments(issueKey, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -549,7 +553,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey || !filePath) {
           throw new Error('issueKey and filePath are required');
         }
-        const result = await uploadAttachment(issueKey, filePath);
+        const result = await uploadAttachment(issueKey, filePath, issueTypeAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

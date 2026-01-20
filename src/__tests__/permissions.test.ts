@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SCOPES, parseScopes, isToolAllowed, type Scope } from '../permissions.js';
+import {
+  SCOPES,
+  parseScopes,
+  isToolAllowed,
+  parseAllowlist,
+  isBoardAllowed,
+  parseIssueTypesAllowlist,
+  isIssueTypeAllowed,
+  type Scope,
+} from '../permissions.js';
 
 describe('SCOPES', () => {
   it('contains all expected scopes', () => {
@@ -165,5 +174,140 @@ describe('isToolAllowed', () => {
   it('returns false for empty allowed set', () => {
     const allowed = new Set<string>();
     expect(isToolAllowed('jira_get_issue', allowed)).toBe(false);
+  });
+});
+
+describe('parseAllowlist', () => {
+  it('returns null sets when envValue is undefined', () => {
+    const result = parseAllowlist(undefined);
+    expect(result.ids).toBeNull();
+    expect(result.names).toBeNull();
+  });
+
+  it('returns null sets when envValue is empty', () => {
+    const result = parseAllowlist('');
+    expect(result.ids).toBeNull();
+    expect(result.names).toBeNull();
+  });
+
+  it('returns null sets when envValue is whitespace', () => {
+    const result = parseAllowlist('   ');
+    expect(result.ids).toBeNull();
+    expect(result.names).toBeNull();
+  });
+
+  it('parses numeric IDs correctly', () => {
+    const result = parseAllowlist('123,456,789');
+    expect(result.ids).toEqual(new Set([123, 456, 789]));
+    expect(result.names?.size).toBe(0);
+  });
+
+  it('parses string names correctly', () => {
+    const result = parseAllowlist('Project Alpha,Project Beta');
+    expect(result.ids?.size).toBe(0);
+    expect(result.names).toEqual(new Set(['project alpha', 'project beta']));
+  });
+
+  it('parses mixed IDs and names correctly', () => {
+    const result = parseAllowlist('123,Project Alpha,456');
+    expect(result.ids).toEqual(new Set([123, 456]));
+    expect(result.names).toEqual(new Set(['project alpha']));
+  });
+
+  it('handles whitespace around items', () => {
+    const result = parseAllowlist('  123  ,  Project Alpha  ');
+    expect(result.ids).toEqual(new Set([123]));
+    expect(result.names).toEqual(new Set(['project alpha']));
+  });
+
+  it('handles empty items in list', () => {
+    const result = parseAllowlist('123,,456,');
+    expect(result.ids).toEqual(new Set([123, 456]));
+  });
+});
+
+describe('isBoardAllowed', () => {
+  it('returns true when allowlist has null sets (no restrictions)', () => {
+    const allowlist = { ids: null, names: null };
+    expect(isBoardAllowed(123, 'Any Board', allowlist)).toBe(true);
+  });
+
+  it('returns true when board ID matches', () => {
+    const allowlist = { ids: new Set([123, 456]), names: new Set<string>() };
+    expect(isBoardAllowed(123, 'Some Board', allowlist)).toBe(true);
+    expect(isBoardAllowed(456, 'Other Board', allowlist)).toBe(true);
+  });
+
+  it('returns true when board name matches (case-insensitive)', () => {
+    const allowlist = { ids: new Set<number>(), names: new Set(['project alpha']) };
+    expect(isBoardAllowed(999, 'Project Alpha', allowlist)).toBe(true);
+    expect(isBoardAllowed(999, 'PROJECT ALPHA', allowlist)).toBe(true);
+    expect(isBoardAllowed(999, 'project alpha', allowlist)).toBe(true);
+  });
+
+  it('returns false when board does not match', () => {
+    const allowlist = { ids: new Set([123]), names: new Set(['project alpha']) };
+    expect(isBoardAllowed(999, 'Project Beta', allowlist)).toBe(false);
+  });
+
+  it('returns true when either ID or name matches', () => {
+    const allowlist = { ids: new Set([123]), names: new Set(['project beta']) };
+    expect(isBoardAllowed(123, 'Project Alpha', allowlist)).toBe(true);
+    expect(isBoardAllowed(999, 'Project Beta', allowlist)).toBe(true);
+  });
+});
+
+describe('parseIssueTypesAllowlist', () => {
+  it('returns null when envValue is undefined', () => {
+    expect(parseIssueTypesAllowlist(undefined)).toBeNull();
+  });
+
+  it('returns null when envValue is empty', () => {
+    expect(parseIssueTypesAllowlist('')).toBeNull();
+  });
+
+  it('returns null when envValue is whitespace', () => {
+    expect(parseIssueTypesAllowlist('   ')).toBeNull();
+  });
+
+  it('parses issue types correctly (lowercase)', () => {
+    const result = parseIssueTypesAllowlist('Bug,Task,Story');
+    expect(result).toEqual(new Set(['bug', 'task', 'story']));
+  });
+
+  it('handles whitespace around items', () => {
+    const result = parseIssueTypesAllowlist('  Bug  ,  Task  ');
+    expect(result).toEqual(new Set(['bug', 'task']));
+  });
+
+  it('handles empty items in list', () => {
+    const result = parseIssueTypesAllowlist('Bug,,Task,');
+    expect(result).toEqual(new Set(['bug', 'task']));
+  });
+});
+
+describe('isIssueTypeAllowed', () => {
+  it('returns true when allowlist is null (no restrictions)', () => {
+    expect(isIssueTypeAllowed('Bug', null)).toBe(true);
+    expect(isIssueTypeAllowed('Any Type', null)).toBe(true);
+  });
+
+  it('returns true when issue type matches (case-insensitive)', () => {
+    const allowlist = new Set(['bug', 'task']);
+    expect(isIssueTypeAllowed('Bug', allowlist)).toBe(true);
+    expect(isIssueTypeAllowed('BUG', allowlist)).toBe(true);
+    expect(isIssueTypeAllowed('bug', allowlist)).toBe(true);
+    expect(isIssueTypeAllowed('Task', allowlist)).toBe(true);
+  });
+
+  it('returns false when issue type does not match', () => {
+    const allowlist = new Set(['bug', 'task']);
+    expect(isIssueTypeAllowed('Story', allowlist)).toBe(false);
+    expect(isIssueTypeAllowed('Epic', allowlist)).toBe(false);
+  });
+
+  it('returns false for empty allowlist', () => {
+    const allowlist = new Set<string>();
+    expect(isIssueTypeAllowed('Bug', allowlist)).toBe(false);
   });
 });
