@@ -850,6 +850,9 @@ export async function getBacklogStats(
     }
   }
 
+  // Track if we need custom fields (requires fetching all fields)
+  let needsAllFields = false;
+
   if (options.pivot) {
     const addPivotField = (f: StatsField) => {
       if (f === 'type') fieldsNeeded.add('issuetype');
@@ -861,7 +864,12 @@ export async function getBacklogStats(
     addPivotField(options.pivot.rowField);
     addPivotField(options.pivot.columnField);
     if (options.pivot.valueField) {
-      fieldsNeeded.add(options.pivot.valueField);
+      // Custom fields require fetching all fields from JIRA
+      if (options.pivot.valueField.startsWith('customfield_')) {
+        needsAllFields = true;
+      } else {
+        fieldsNeeded.add(options.pivot.valueField);
+      }
     }
   }
 
@@ -901,9 +909,12 @@ export async function getBacklogStats(
   let pageCount = 0;
   let nextPageToken: string | undefined;
 
+  // Determine fields to fetch - use *all for custom fields, otherwise specific fields
+  const searchFields = needsAllFields ? ['*all'] : Array.from(fieldsNeeded);
+
   // Fetch up to 4000 issues across multiple pages using token-based pagination
   while (pageCount < 40) { // 40 pages * 100 = 4000 max
-    const response = await client.searchIssues(finalJql, 0, pageSize, Array.from(fieldsNeeded), nextPageToken);
+    const response = await client.searchIssues(finalJql, 0, pageSize, searchFields, nextPageToken);
     if (response.total !== undefined) {
       totalFromJira = response.total;
     }
