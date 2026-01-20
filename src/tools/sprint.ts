@@ -118,22 +118,39 @@ export async function listSprints(
   const seenSprintIds = new Set<number>();
 
   for (const boardId of boardIds) {
-    // Fetch more than needed to handle pagination after deduplication
-    const response = await client.getSprintsForBoard(boardId, options.state, 0, 200);
+    // When no state filter specified, fetch each state separately to ensure we get
+    // active/future sprints (JIRA API returns oldest first, so we'd miss recent ones)
+    const statesToFetch: Array<'active' | 'future' | 'closed' | undefined> = options.state
+      ? [options.state]
+      : ['active', 'future', 'closed'];
 
-    for (const sprint of response.values) {
-      if (!seenSprintIds.has(sprint.id)) {
-        seenSprintIds.add(sprint.id);
-        allSprints.push({
-          id: sprint.id,
-          name: sprint.name,
-          state: sprint.state,
-          startDate: sprint.startDate,
-          endDate: sprint.endDate,
-          completeDate: sprint.completeDate,
-          goal: sprint.goal,
-          boardId: sprint.originBoardId,
-        });
+    for (const state of statesToFetch) {
+      // Paginate through all sprints for this state
+      let pageStart = 0;
+      const pageSize = 50;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await client.getSprintsForBoard(boardId, state, pageStart, pageSize);
+
+        for (const sprint of response.values) {
+          if (!seenSprintIds.has(sprint.id)) {
+            seenSprintIds.add(sprint.id);
+            allSprints.push({
+              id: sprint.id,
+              name: sprint.name,
+              state: sprint.state,
+              startDate: sprint.startDate,
+              endDate: sprint.endDate,
+              completeDate: sprint.completeDate,
+              goal: sprint.goal,
+              boardId: sprint.originBoardId,
+            });
+          }
+        }
+
+        hasMore = !response.isLast && response.values.length === pageSize;
+        pageStart += pageSize;
       }
     }
   }
