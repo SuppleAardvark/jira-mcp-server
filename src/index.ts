@@ -18,14 +18,15 @@ import {
   createIssue,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
-import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist } from './permissions.js';
+import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist, parseProjectAllowlist } from './permissions.js';
 
 // Parse permission scopes from environment variable
 const allowedTools = parseScopes(process.env.JIRA_SCOPES);
 
-// Parse board and issue type allowlists
+// Parse board, issue type, and project allowlists
 const boardAllowlist = parseAllowlist(process.env.JIRA_ALLOWED_BOARDS);
 const issueTypeAllowlist = parseIssueTypesAllowlist(process.env.JIRA_ALLOWED_ISSUE_TYPES);
+const projectAllowlist = parseProjectAllowlist(process.env.JIRA_ALLOWED_PROJECTS);
 
 const server = new Server(
   {
@@ -410,7 +411,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getIssue(issueKey, issueTypeAllowlist);
+        const result = await getIssue(issueKey, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -422,7 +423,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!jql) {
           throw new Error('jql is required');
         }
-        const result = await searchIssues(jql, maxResults, issueTypeAllowlist);
+        const result = await searchIssues(jql, maxResults, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -434,7 +435,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getIssueComments(issueKey, maxResults, issueTypeAllowlist);
+        const result = await getIssueComments(issueKey, maxResults, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -458,7 +459,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args?.priority !== undefined) updates.priority = args.priority as string;
         if (args?.labels !== undefined) updates.labels = args.labels as string[];
 
-        const result = await updateIssue(issueKey, updates, issueTypeAllowlist);
+        const result = await updateIssue(issueKey, updates, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -469,7 +470,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await getTransitions(issueKey, issueTypeAllowlist);
+        const result = await getTransitions(issueKey, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -482,7 +483,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey || !transitionId) {
           throw new Error('issueKey and transitionId are required');
         }
-        const result = await transitionIssue(issueKey, transitionId, comment, issueTypeAllowlist);
+        const result = await transitionIssue(issueKey, transitionId, comment, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -494,7 +495,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey || !body) {
           throw new Error('issueKey and body are required');
         }
-        const result = await addComment(issueKey, body, issueTypeAllowlist);
+        const result = await addComment(issueKey, body, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -517,7 +518,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           assignee: args?.assignee as string | undefined,
           parent: args?.parent as string | undefined,
           components: args?.components as string[] | undefined,
-        }, issueTypeAllowlist);
+        }, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -529,7 +530,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey) {
           throw new Error('issueKey is required');
         }
-        const result = await listAttachments(issueKey, issueTypeAllowlist);
+        const result = await listAttachments(issueKey, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -553,7 +554,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!issueKey || !filePath) {
           throw new Error('issueKey and filePath are required');
         }
-        const result = await uploadAttachment(issueKey, filePath, issueTypeAllowlist);
+        const result = await uploadAttachment(issueKey, filePath, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

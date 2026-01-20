@@ -6,18 +6,25 @@ import type {
   JiraDocumentNode,
   CreateIssueResult,
 } from '../types.js';
-import { isIssueTypeAllowed } from '../permissions.js';
+import { isIssueTypeAllowed, isProjectAllowed, getProjectFromIssueKey } from '../permissions.js';
 
 /**
- * Verify that an issue's type is allowed, throwing an error if not.
+ * Verify that an issue's project and type are allowed, throwing an error if not.
  * Returns the issue type name for convenience.
  */
-async function verifyIssueTypeAllowed(
+async function verifyIssueAllowed(
   issueKey: string,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<string> {
+  // Check project allowlist first (can be done without fetching the issue)
+  const projectKey = getProjectFromIssueKey(issueKey);
+  if (!isProjectAllowed(projectKey, projectAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
+
   if (issueTypeAllowlist === null) {
-    // No restrictions, but we still need to fetch the type for consistency
+    // No type restrictions, but we still need to fetch the type for consistency
     const client = getJiraClient();
     const issue = await client.getIssue(issueKey);
     return issue.fields.issuetype.name;
@@ -91,8 +98,15 @@ export function extractParent(fields: Record<string, unknown>): IssueDetails['pa
 
 export async function getIssue(
   issueKey: string,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<IssueDetails> {
+  // Check project allowlist first
+  const projectKey = getProjectFromIssueKey(issueKey);
+  if (!isProjectAllowed(projectKey, projectAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
+
   const client = getJiraClient();
   const issue = await client.getIssue(issueKey, ['renderedFields']);
 
@@ -126,7 +140,8 @@ export async function getIssue(
 export async function searchIssues(
   jql: string,
   maxResults = 50,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{
   issues: Array<{
     key: string;
@@ -148,10 +163,12 @@ export async function searchIssues(
     'parent',
   ]);
 
-  // Filter results by allowed issue types
-  const filteredIssues = response.issues.filter((issue) =>
-    isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist)
-  );
+  // Filter results by allowed projects and issue types
+  const filteredIssues = response.issues.filter((issue) => {
+    const projectKey = getProjectFromIssueKey(issue.key);
+    return isProjectAllowed(projectKey, projectAllowlist) &&
+      isIssueTypeAllowed(issue.fields.issuetype.name, issueTypeAllowlist);
+  });
 
   return {
     issues: filteredIssues.map((issue) => {
@@ -173,14 +190,15 @@ export async function searchIssues(
 export async function getIssueComments(
   issueKey: string,
   maxResults = 20,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   comments: CommentSummary[];
   total: number;
 }> {
-  // Verify issue type is allowed
-  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+  // Verify issue project and type are allowed
+  await verifyIssueAllowed(issueKey, issueTypeAllowlist, projectAllowlist);
 
   const client = getJiraClient();
   const response = await client.getIssueComments(issueKey, 0, maxResults);
@@ -206,10 +224,11 @@ export async function updateIssue(
     priority?: string; // priority name or id
     labels?: string[];
   },
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{ success: boolean; issueKey: string }> {
-  // Verify issue type is allowed
-  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+  // Verify issue project and type are allowed
+  await verifyIssueAllowed(issueKey, issueTypeAllowlist, projectAllowlist);
 
   const client = getJiraClient();
 
@@ -252,7 +271,8 @@ export async function updateIssue(
 
 export async function getTransitions(
   issueKey: string,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   transitions: Array<{
@@ -262,8 +282,8 @@ export async function getTransitions(
     toStatusCategory: string;
   }>;
 }> {
-  // Verify issue type is allowed
-  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+  // Verify issue project and type are allowed
+  await verifyIssueAllowed(issueKey, issueTypeAllowlist, projectAllowlist);
 
   const client = getJiraClient();
   const response = await client.getTransitions(issueKey);
@@ -283,10 +303,11 @@ export async function transitionIssue(
   issueKey: string,
   transitionId: string,
   comment: string | undefined,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{ success: boolean; issueKey: string; transitionId: string }> {
-  // Verify issue type is allowed
-  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+  // Verify issue project and type are allowed
+  await verifyIssueAllowed(issueKey, issueTypeAllowlist, projectAllowlist);
 
   const client = getJiraClient();
 
@@ -298,10 +319,11 @@ export async function transitionIssue(
 export async function addComment(
   issueKey: string,
   body: string,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{ success: boolean; issueKey: string; commentId: string }> {
-  // Verify issue type is allowed
-  await verifyIssueTypeAllowed(issueKey, issueTypeAllowlist);
+  // Verify issue project and type are allowed
+  await verifyIssueAllowed(issueKey, issueTypeAllowlist, projectAllowlist);
 
   const client = getJiraClient();
 
@@ -322,8 +344,14 @@ export async function createIssue(
     parent?: string; // parent issue key (for subtasks or linking to epics)
     components?: string[];
   },
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<CreateIssueResult> {
+  // Check if project is allowed
+  if (!isProjectAllowed(options.projectKey, projectAllowlist)) {
+    throw new Error(`Invalid project: ${options.projectKey}`);
+  }
+
   // Check if issue type is allowed
   if (!isIssueTypeAllowed(options.issueType, issueTypeAllowlist)) {
     throw new Error(`Invalid issue type: ${options.issueType}`);

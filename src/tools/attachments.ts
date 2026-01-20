@@ -1,14 +1,21 @@
 import { getJiraClient } from '../jira-client.js';
 import type { AttachmentSummary } from '../types.js';
-import { isIssueTypeAllowed } from '../permissions.js';
+import { isIssueTypeAllowed, isProjectAllowed, getProjectFromIssueKey } from '../permissions.js';
 
 export async function listAttachments(
   issueKey: string,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   attachments: AttachmentSummary[];
 }> {
+  // Check project allowlist first
+  const projectKey = getProjectFromIssueKey(issueKey);
+  if (!isProjectAllowed(projectKey, projectAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
+
   const client = getJiraClient();
   const issue = await client.getIssue(issueKey);
 
@@ -48,11 +55,18 @@ export async function downloadAttachment(
 export async function uploadAttachment(
   issueKey: string,
   filePath: string,
-  issueTypeAllowlist: Set<string> | null
+  issueTypeAllowlist: Set<string> | null,
+  projectAllowlist: Set<string> | null
 ): Promise<{
   issueKey: string;
   attachments: AttachmentSummary[];
 }> {
+  // Check project allowlist first
+  const projectKey = getProjectFromIssueKey(issueKey);
+  if (!isProjectAllowed(projectKey, projectAllowlist)) {
+    throw new Error(`Issue not found: ${issueKey}`);
+  }
+
   // Verify issue type is allowed
   const client = getJiraClient();
   const issue = await client.getIssue(issueKey);

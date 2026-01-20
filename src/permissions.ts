@@ -181,3 +181,57 @@ export function isIssueTypeAllowed(
   }
   return allowlist.has(issueType.toLowerCase());
 }
+
+/**
+ * Parse the project allowlist environment variable.
+ * Returns null if not configured (meaning all projects allowed).
+ *
+ * @param envValue - Pipe-separated list of project keys (e.g., "PROJ|DEV|OPS")
+ * @returns Set of uppercase project keys, or null if all allowed
+ */
+export function parseProjectAllowlist(envValue: string | undefined): Set<string> | null {
+  if (!envValue || envValue.trim() === '') {
+    return null;
+  }
+
+  const projects = new Set<string>();
+  const items = envValue.split('|').map(s => s.trim()).filter(s => s !== '');
+
+  for (const item of items) {
+    // Project keys are typically uppercase
+    projects.add(item.toUpperCase());
+  }
+
+  return projects;
+}
+
+/**
+ * Check if a project is allowed by the allowlist.
+ *
+ * @param projectKey - The project key (e.g., "PROJ")
+ * @param allowlist - The parsed allowlist (null means all allowed)
+ * @returns true if the project is allowed
+ */
+export function isProjectAllowed(
+  projectKey: string,
+  allowlist: Set<string> | null
+): boolean {
+  if (allowlist === null) {
+    return true;
+  }
+  return allowlist.has(projectKey.toUpperCase());
+}
+
+/**
+ * Extract project key from an issue key.
+ *
+ * @param issueKey - The issue key (e.g., "PROJ-123")
+ * @returns The project key (e.g., "PROJ")
+ */
+export function getProjectFromIssueKey(issueKey: string): string {
+  const match = issueKey.match(/^([A-Z][A-Z0-9]*)-\d+$/i);
+  if (!match) {
+    throw new Error(`Invalid issue key format: ${issueKey}`);
+  }
+  return match[1].toUpperCase();
+}

@@ -46,6 +46,9 @@ export JIRA_SCOPES="boards:read,sprints:read,issues:read"
 # Restrict access to specific boards (pipe-separated, by ID or name)
 export JIRA_ALLOWED_BOARDS="123|My Project Board"
 
+# Restrict access to specific projects (pipe-separated)
+export JIRA_ALLOWED_PROJECTS="PROJ|DEV"
+
 # Restrict access to specific issue types (pipe-separated)
 export JIRA_ALLOWED_ISSUE_TYPES="Bug|Task|Story"
 ```
@@ -297,7 +300,7 @@ Invalid scope names are logged as warnings and ignored.
 
 ## Resource Allowlists
 
-In addition to tool-level scopes, you can restrict access to specific boards and issue types using allowlists. Resources outside the allowlist are hidden from the agent.
+In addition to tool-level scopes, you can restrict access to specific boards, projects, and issue types using allowlists. Resources outside the allowlist are hidden from the agent.
 
 ### Board Allowlist
 
@@ -339,9 +342,28 @@ JIRA_ALLOWED_ISSUE_TYPES="bug|task|story|sub-task"
 - All issue operations (update, transition, comment, attachments) fail for non-allowed types
 - If not set, all issue types are accessible
 
+### Project Allowlist
+
+Use `JIRA_ALLOWED_PROJECTS` to restrict which projects the agent can access. This filters issues by project key.
+
+```bash
+# Allow only specific projects
+JIRA_ALLOWED_PROJECTS="PROJ|DEV"
+
+# Single project (case-insensitive)
+JIRA_ALLOWED_PROJECTS="proj"
+```
+
+**Behavior:**
+- `jira_get_issue` fails for issues from non-allowed projects
+- `jira_search_issues` filters out issues from non-allowed projects
+- `jira_create_issue` fails when trying to create issues in non-allowed projects
+- All issue operations (update, transition, comment, attachments) fail for non-allowed projects
+- If not set, all projects are accessible
+
 ### Combined Example
 
-Restrict agent to only view bugs and tasks on a specific project board:
+Restrict agent to only view bugs and tasks in a specific project:
 
 ```json
 {
@@ -354,6 +376,7 @@ Restrict agent to only view bugs and tasks on a specific project board:
         "JIRA_API_TOKEN": "your-api-token",
         "JIRA_SCOPES": "boards:read,sprints:read,issues:read",
         "JIRA_ALLOWED_BOARDS": "Project Alpha",
+        "JIRA_ALLOWED_PROJECTS": "PROJ",
         "JIRA_ALLOWED_ISSUE_TYPES": "Bug|Task"
       }
     }

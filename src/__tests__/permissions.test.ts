@@ -7,6 +7,9 @@ import {
   isBoardAllowed,
   parseIssueTypesAllowlist,
   isIssueTypeAllowed,
+  parseProjectAllowlist,
+  isProjectAllowed,
+  getProjectFromIssueKey,
   type Scope,
 } from '../permissions.js';
 
@@ -319,5 +322,85 @@ describe('isIssueTypeAllowed', () => {
   it('returns false for empty allowlist', () => {
     const allowlist = new Set<string>();
     expect(isIssueTypeAllowed('Bug', allowlist)).toBe(false);
+  });
+});
+
+describe('parseProjectAllowlist', () => {
+  it('returns null when envValue is undefined', () => {
+    expect(parseProjectAllowlist(undefined)).toBeNull();
+  });
+
+  it('returns null when envValue is empty', () => {
+    expect(parseProjectAllowlist('')).toBeNull();
+  });
+
+  it('returns null when envValue is whitespace', () => {
+    expect(parseProjectAllowlist('   ')).toBeNull();
+  });
+
+  it('parses project keys correctly (uppercase)', () => {
+    const result = parseProjectAllowlist('PROJ|DEV|OPS');
+    expect(result).toEqual(new Set(['PROJ', 'DEV', 'OPS']));
+  });
+
+  it('converts lowercase to uppercase', () => {
+    const result = parseProjectAllowlist('proj|dev');
+    expect(result).toEqual(new Set(['PROJ', 'DEV']));
+  });
+
+  it('handles whitespace around items', () => {
+    const result = parseProjectAllowlist('  PROJ  |  DEV  ');
+    expect(result).toEqual(new Set(['PROJ', 'DEV']));
+  });
+
+  it('handles empty items in list', () => {
+    const result = parseProjectAllowlist('PROJ||DEV|');
+    expect(result).toEqual(new Set(['PROJ', 'DEV']));
+  });
+});
+
+describe('isProjectAllowed', () => {
+  it('returns true when allowlist is null (no restrictions)', () => {
+    expect(isProjectAllowed('PROJ', null)).toBe(true);
+    expect(isProjectAllowed('ANY', null)).toBe(true);
+  });
+
+  it('returns true when project matches (case-insensitive)', () => {
+    const allowlist = new Set(['PROJ', 'DEV']);
+    expect(isProjectAllowed('PROJ', allowlist)).toBe(true);
+    expect(isProjectAllowed('proj', allowlist)).toBe(true);
+    expect(isProjectAllowed('Proj', allowlist)).toBe(true);
+    expect(isProjectAllowed('DEV', allowlist)).toBe(true);
+  });
+
+  it('returns false when project does not match', () => {
+    const allowlist = new Set(['PROJ', 'DEV']);
+    expect(isProjectAllowed('OPS', allowlist)).toBe(false);
+    expect(isProjectAllowed('OTHER', allowlist)).toBe(false);
+  });
+
+  it('returns false for empty allowlist', () => {
+    const allowlist = new Set<string>();
+    expect(isProjectAllowed('PROJ', allowlist)).toBe(false);
+  });
+});
+
+describe('getProjectFromIssueKey', () => {
+  it('extracts project key from valid issue key', () => {
+    expect(getProjectFromIssueKey('PROJ-123')).toBe('PROJ');
+    expect(getProjectFromIssueKey('DEV-1')).toBe('DEV');
+    expect(getProjectFromIssueKey('ABC123-999')).toBe('ABC123');
+  });
+
+  it('returns uppercase project key', () => {
+    expect(getProjectFromIssueKey('proj-123')).toBe('PROJ');
+    expect(getProjectFromIssueKey('Dev-456')).toBe('DEV');
+  });
+
+  it('throws error for invalid issue key format', () => {
+    expect(() => getProjectFromIssueKey('invalid')).toThrow('Invalid issue key format');
+    expect(() => getProjectFromIssueKey('123-456')).toThrow('Invalid issue key format');
+    expect(() => getProjectFromIssueKey('PROJ')).toThrow('Invalid issue key format');
+    expect(() => getProjectFromIssueKey('')).toThrow('Invalid issue key format');
   });
 });
