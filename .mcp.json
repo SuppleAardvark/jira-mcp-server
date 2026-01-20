@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "bash",
+      "args": ["-c", "set -a && source .env && set +a && node dist/index.js"],
+      "cwd": "."
+    }
+  }
+}
