@@ -34,3 +34,26 @@ export async function downloadAttachment(
   const client = getJiraClient();
   return client.downloadAttachment(attachmentId, outputPath);
 }
+
+export async function uploadAttachment(
+  issueKey: string,
+  filePath: string
+): Promise<{
+  issueKey: string;
+  attachments: AttachmentSummary[];
+}> {
+  const client = getJiraClient();
+  const uploaded = await client.uploadAttachment(issueKey, filePath);
+
+  return {
+    issueKey,
+    attachments: uploaded.map((att) => ({
+      id: att.id,
+      filename: att.filename,
+      size: att.size,
+      mimeType: att.mimeType,
+      created: att.created,
+      author: att.author.displayName,
+    })),
+  };
+}

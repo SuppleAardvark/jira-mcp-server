@@ -301,6 +301,58 @@ export class JiraClient {
       size: buffer.length,
     };
   }
+
+  async uploadAttachment(
+    issueKey: string,
+    filePath: string
+  ): Promise<JiraAttachment[]> {
+    const url = `${this.config.baseUrl}/rest/api/3/issue/${issueKey}/attachments`;
+
+    // Read file and get metadata
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
+
+    const fileBuffer = fs.readFileSync(filePath);
+    const filename = path.basename(filePath);
+
+    // Create form data with the file
+    const boundary = `----FormBoundary${Date.now()}`;
+    const crlf = '\r\n';
+
+    const formDataParts = [
+      `--${boundary}${crlf}`,
+      `Content-Disposition: form-data; name="file"; filename="${filename}"${crlf}`,
+      `Content-Type: application/octet-stream${crlf}${crlf}`,
+    ];
+
+    const formDataEnd = `${crlf}--${boundary}--${crlf}`;
+
+    // Combine parts into a single buffer
+    const formDataStart = Buffer.from(formDataParts.join(''), 'utf-8');
+    const formDataEndBuffer = Buffer.from(formDataEnd, 'utf-8');
+    const body = Buffer.concat([formDataStart, fileBuffer, formDataEndBuffer]);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: this.authHeader,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'X-Atlassian-Token': 'no-check',
+        Accept: 'application/json',
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        `JIRA API error: ${response.status} ${response.statusText}\n${errorBody}`
+      );
+    }
+
+    return response.json() as Promise<JiraAttachment[]>;
+  }
 }
 
 // Singleton instance

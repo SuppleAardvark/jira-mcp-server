@@ -17,7 +17,11 @@ import {
   addComment,
   createIssue,
 } from './tools/issues.js';
-import { listAttachments, downloadAttachment } from './tools/attachments.js';
+import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
+import { parseScopes, isToolAllowed } from './permissions.js';
+
+// Parse permission scopes from environment variable
+const allowedTools = parseScopes(process.env.JIRA_SCOPES);
 
 const server = new Server(
   {
@@ -31,12 +35,11 @@ const server = new Server(
   }
 );
 
-// Define available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    // Sprint tools
-    {
-      name: 'jira_list_boards',
+// All available tools
+const allTools = [
+  // Sprint tools
+  {
+    name: 'jira_list_boards',
       description: 'List all accessible JIRA boards. Returns board IDs, names, types (scrum/kanban), and project keys.',
       inputSchema: {
         type: 'object',
@@ -315,12 +318,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['attachmentId', 'outputPath'],
       },
     },
-  ],
+    {
+      name: 'jira_upload_attachment',
+      description: 'Upload a file as an attachment to a JIRA issue.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          issueKey: {
+            type: 'string',
+            description: 'The issue key (e.g., PROJ-123)',
+          },
+          filePath: {
+            type: 'string',
+            description: 'Local file path to upload',
+          },
+        },
+        required: ['issueKey', 'filePath'],
+      },
+    },
+  ];
+
+// Define available tools (filtered by permission scopes)
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: allTools.filter(tool => isToolAllowed(tool.name, allowedTools)),
 }));
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+
+  // Check if tool is allowed by permission scopes
+  if (!isToolAllowed(name, allowedTools)) {
+    return {
+      content: [{ type: 'text', text: `Error: Tool "${name}" is not allowed by current permission scopes` }],
+      isError: true,
+    };
+  }
 
   try {
     switch (name) {
@@ -505,6 +538,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('attachmentId and outputPath are required');
         }
         const result = await downloadAttachment(attachmentId, outputPath);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'jira_upload_attachment': {
+        const issueKey = args?.issueKey as string;
+        const filePath = args?.filePath as string;
+        if (!issueKey || !filePath) {
+          throw new Error('issueKey and filePath are required');
+        }
+        const result = await uploadAttachment(issueKey, filePath);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
