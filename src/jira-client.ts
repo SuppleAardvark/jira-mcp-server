@@ -453,6 +453,16 @@ export class JiraClient {
     }>>(`/rest/api/3/project/${projectKey}/components`);
   }
 
+  // Get issue types available for creating issues in a project
+  async getProjectIssueTypes(
+    projectKey: string
+  ): Promise<Array<{ id: string; name: string }>> {
+    const result = await this.request<{
+      issueTypes: Array<{ id: string; name: string }>;
+    }>(`/rest/api/3/issue/createmeta/${projectKey}/issuetypes`);
+    return result.issueTypes;
+  }
+
   // Get fields available for creating issues in a project/issue type
   async getCreateMeta(
     projectKey: string,

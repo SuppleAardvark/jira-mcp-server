@@ -20,6 +20,7 @@ import {
   getBacklogStats,
   debugSearch,
   getFieldSchema,
+  getCreateFields,
   getSprintReport,
   listFieldValues,
   type IssueField,
@@ -36,6 +37,35 @@ const allowedTools = parseScopes(process.env.JIRA_SCOPES);
 const boardAllowlist = parseAllowlist(process.env.JIRA_ALLOWED_BOARDS);
 const issueTypeAllowlist = parseIssueTypesAllowlist(process.env.JIRA_ALLOWED_ISSUE_TYPES);
 const projectAllowlist = parseProjectAllowlist(process.env.JIRA_ALLOWED_PROJECTS);
+
+// Sprint report defaults from environment variables
+// Format: pipe-separated status names (e.g., "To Do|Open|Reopened")
+function parseStatusList(envValue: string | undefined): string[] | undefined {
+  if (!envValue || envValue.trim() === '') return undefined;
+  return envValue.split('|').map(s => s.trim()).filter(s => s !== '');
+}
+
+function parseStatusGroups(envValue: string | undefined): Record<string, string[]> | undefined {
+  // Format: "GroupName:Status1,Status2|GroupName2:Status3,Status4"
+  if (!envValue || envValue.trim() === '') return undefined;
+  const groups: Record<string, string[]> = {};
+  const parts = envValue.split('|');
+  for (const part of parts) {
+    const [groupName, statuses] = part.split(':');
+    if (groupName && statuses) {
+      groups[groupName.trim()] = statuses.split(',').map(s => s.trim()).filter(s => s !== '');
+    }
+  }
+  return Object.keys(groups).length > 0 ? groups : undefined;
+}
+
+const sprintReportDefaults = {
+  statusGroups: parseStatusGroups(process.env.JIRA_STATUS_GROUPS),
+  bugBacklogStatuses: parseStatusList(process.env.JIRA_BUG_BACKLOG_STATUSES),
+  blockedStatuses: parseStatusList(process.env.JIRA_BLOCKED_STATUSES),
+  doneStatuses: parseStatusList(process.env.JIRA_DONE_STATUSES),
+  storyPointsField: process.env.JIRA_STORY_POINTS_FIELD,
+};
 
 const server = new Server(
   {
@@ -326,7 +356,7 @@ const allTools = [
           },
           storyPointsField: {
             type: 'string',
-            description: 'Custom field ID for story points (e.g., "customfield_10024"). Use jira_get_field_schema to find this.',
+            description: 'Custom field ID for story points (e.g., "customfield_10024"). Optional if JIRA_STORY_POINTS_FIELD env var is set.',
           },
           labelsOfInterest: {
             type: 'array',
@@ -335,11 +365,21 @@ const allTools = [
           },
           statusGroups: {
             type: 'object',
-            description: 'Custom status groupings. Keys are group names, values are arrays of status names. Defaults include: To Do, Blocked, In Progress, Design Review, To Test, Done.',
+            description: 'Custom status groupings. Keys are group names, values are arrays of status names. Can be set via JIRA_STATUS_GROUPS env var. Defaults: To Do, Blocked, In Progress, Design Review, To Test, Done.',
             additionalProperties: {
               type: 'array',
               items: { type: 'string' },
             },
+          },
+          bugBacklogStatuses: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Statuses to include when counting bugs in backlog (e.g., ["To Do"]). Can be set via JIRA_BUG_BACKLOG_STATUSES env var. Default: all bugs not in Done statuses.',
+          },
+          blockedStatuses: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Statuses considered "blocked" (e.g., ["Blocked", "Blocked on QA"]). Can be set via JIRA_BLOCKED_STATUSES env var. Default: ["Blocked", "Blocked on QA"].',
           },
           includeTriage: {
             type: 'boolean',
@@ -527,6 +567,11 @@ const allTools = [
             items: { type: 'string' },
             description: 'Array of component names to add to the issue',
           },
+          customFields: {
+            type: 'object',
+            description: 'Custom fields to set on the issue. Keys should be field IDs (e.g., "customfield_10001") and values depend on field type. Use jira_get_create_fields to discover required fields and their formats.',
+            additionalProperties: true,
+          },
         },
         required: ['projectKey', 'summary', 'issueType'],
       },
@@ -602,6 +647,30 @@ const allTools = [
             description: 'Filter fields by name or ID (case-insensitive). E.g., "story" to find Story Points field.',
           },
         },
+      },
+    },
+
+    // Create fields discovery tool
+    {
+      name: 'jira_get_create_fields',
+      description: 'IMPORTANT: Call this BEFORE creating an issue to discover required fields and their formats. Returns all required fields for a project and issue type, including custom fields, with allowed values and format hints. This prevents "field is required" errors during issue creation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectKey: {
+            type: 'string',
+            description: 'The project key (e.g., "PROJ")',
+          },
+          issueType: {
+            type: 'string',
+            description: 'The issue type name (e.g., "Task", "Bug", "Story")',
+          },
+          includeOptional: {
+            type: 'boolean',
+            description: 'If true, also return optional fields. Default: false (only required fields).',
+          },
+        },
+        required: ['projectKey', 'issueType'],
       },
     },
 
@@ -794,9 +863,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'jira_get_sprint_report': {
         const sprintId = args?.sprintId as number;
         const projectKey = args?.projectKey as string;
-        const storyPointsField = args?.storyPointsField as string;
-        if (!sprintId || !projectKey || !storyPointsField) {
-          throw new Error('sprintId, projectKey, and storyPointsField are required');
+        // Use provided storyPointsField, fall back to env default
+        const storyPointsField = (args?.storyPointsField as string) || sprintReportDefaults.storyPointsField;
+        if (!sprintId || !projectKey) {
+          throw new Error('sprintId and projectKey are required');
+        }
+        if (!storyPointsField) {
+          throw new Error('storyPointsField is required (provide it or set JIRA_STORY_POINTS_FIELD env var)');
         }
         const options = {
           sprintId,
@@ -804,7 +877,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           storyPointsField,
           previousSprintId: args?.previousSprintId as number | undefined,
           labelsOfInterest: args?.labelsOfInterest as string[] | undefined,
-          statusGroups: args?.statusGroups as Record<string, string[]> | undefined,
+          // Use provided values or fall back to env defaults
+          statusGroups: (args?.statusGroups as Record<string, string[]> | undefined) ?? sprintReportDefaults.statusGroups,
+          bugBacklogStatuses: (args?.bugBacklogStatuses as string[] | undefined) ?? sprintReportDefaults.bugBacklogStatuses,
+          blockedStatuses: (args?.blockedStatuses as string[] | undefined) ?? sprintReportDefaults.blockedStatuses,
           includeTriage: args?.includeTriage as boolean | undefined,
           includeInflow: args?.includeInflow as boolean | undefined,
         };
@@ -917,6 +993,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           assignee: args?.assignee as string | undefined,
           parent: args?.parent as string | undefined,
           components: args?.components as string[] | undefined,
+          customFields: args?.customFields as Record<string, unknown> | undefined,
         }, issueTypeAllowlist, projectAllowlist);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -965,6 +1042,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const customOnly = args?.customOnly as boolean | undefined;
         const searchTerm = args?.searchTerm as string | undefined;
         const result = await getFieldSchema({ projectKey, customOnly, searchTerm });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      // Create fields discovery tool
+      case 'jira_get_create_fields': {
+        const projectKey = args?.projectKey as string;
+        const issueType = args?.issueType as string;
+        if (!projectKey || !issueType) {
+          throw new Error('projectKey and issueType are required');
+        }
+        const includeOptional = args?.includeOptional as boolean | undefined;
+        const result = await getCreateFields(projectKey, issueType, { includeOptional });
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

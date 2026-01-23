@@ -596,6 +596,7 @@ export async function createIssue(
     assignee?: string; // accountId
     parent?: string; // parent issue key (for subtasks or linking to epics)
     components?: string[];
+    customFields?: Record<string, unknown>; // customfield_XXXXX -> value
   },
   issueTypeAllowlist: Set<string> | null,
   projectAllowlist: Set<string> | null
@@ -650,6 +651,13 @@ export async function createIssue(
 
   if (options.components) {
     fields.components = options.components.map((name) => ({ name }));
+  }
+
+  // Add custom fields - pass through as-is (user provides customfield_XXXXX keys)
+  if (options.customFields) {
+    for (const [key, value] of Object.entries(options.customFields)) {
+      fields[key] = value;
+    }
   }
 
   const result = await client.createIssue(fields);
@@ -1294,6 +1302,173 @@ export async function getFieldSchema(options?: {
   };
 }
 
+export interface CreateFieldInfo {
+  id: string;
+  name: string;
+  required: boolean;
+  schema: {
+    type: string;
+    items?: string;
+    custom?: string;
+    customId?: number;
+  };
+  allowedValues?: Array<{ id: string; name: string; value?: string }>;
+  formatHint?: string; // Help text for how to format the value
+}
+
+export interface GetCreateFieldsResult {
+  projectKey: string;
+  issueType: string;
+  issueTypeId: string;
+  requiredFields: CreateFieldInfo[];
+  optionalFields: CreateFieldInfo[];
+  total: number;
+}
+
+/**
+ * Get fields available for creating issues in a project with a specific issue type.
+ * Returns required and optional fields with their schemas and allowed values.
+ * This is the recommended tool to call before jira_create_issue to discover
+ * what fields are needed and their expected formats.
+ */
+export async function getCreateFields(
+  projectKey: string,
+  issueTypeName: string,
+  options?: {
+    includeOptional?: boolean; // Include optional fields (default: false, only required)
+  }
+): Promise<GetCreateFieldsResult> {
+  const client = getJiraClient();
+
+  // Get issue types for the project to find the ID
+  const projectIssueTypes = await client.getProjectIssueTypes(projectKey);
+
+  const issueType = projectIssueTypes.find(
+    (t) => t.name.toLowerCase() === issueTypeName.toLowerCase()
+  );
+
+  if (!issueType) {
+    const availableTypes = projectIssueTypes.map((t) => t.name).join(', ');
+    throw new Error(
+      `Issue type "${issueTypeName}" not found in project ${projectKey}. Available types: ${availableTypes}`
+    );
+  }
+
+  // Get field metadata for this issue type
+  const meta = await client.getCreateMeta(projectKey, issueType.id);
+
+  // Helper to generate format hints based on schema type
+  function getFormatHint(field: {
+    schema: { type: string; items?: string; custom?: string };
+    allowedValues?: Array<{ id: string; name: string; value?: string }>;
+  }): string | undefined {
+    const { type, items, custom } = field.schema;
+
+    if (field.allowedValues && field.allowedValues.length > 0) {
+      if (field.allowedValues.length <= 5) {
+        const values = field.allowedValues.map((v) => v.name || v.value || v.id).join(', ');
+        return `Allowed values: ${values}`;
+      }
+      return `Select from ${field.allowedValues.length} allowed values (use id or name)`;
+    }
+
+    switch (type) {
+      case 'string':
+        return 'Plain text string';
+      case 'number':
+        return 'Numeric value';
+      case 'array':
+        if (items === 'string') return 'Array of strings, e.g., ["value1", "value2"]';
+        if (items === 'option') return 'Array of objects with id or name, e.g., [{"name": "value"}]';
+        return `Array of ${items || 'values'}`;
+      case 'option':
+        return 'Object with id or name, e.g., {"name": "Value"} or {"id": "10001"}';
+      case 'user':
+        return 'Object with accountId, e.g., {"accountId": "5b10a2844c..."}';
+      case 'date':
+        return 'Date string in format YYYY-MM-DD';
+      case 'datetime':
+        return 'ISO 8601 datetime, e.g., "2024-01-15T10:30:00.000+0000"';
+      case 'issuelink':
+        return 'Object with key, e.g., {"key": "PROJ-123"}';
+      case 'priority':
+        return 'Object with name or id, e.g., {"name": "High"}';
+      default:
+        if (custom) {
+          // Extract custom field type from the custom identifier
+          const customType = custom.split(':').pop();
+          if (customType?.includes('select')) {
+            return 'Single select - use {"value": "Option"} or {"id": "10001"}';
+          }
+          if (customType?.includes('multiselect') || customType?.includes('checkboxes')) {
+            return 'Multi-select - use [{"value": "Option1"}, {"value": "Option2"}]';
+          }
+          if (customType?.includes('textarea')) {
+            return 'Multi-line text string';
+          }
+          if (customType?.includes('float')) {
+            return 'Decimal number';
+          }
+        }
+        return undefined;
+    }
+  }
+
+  // Transform fields to our format
+  const transformField = (fieldData: {
+    fieldId: string;
+    name: string;
+    required: boolean;
+    schema: { type: string; items?: string; custom?: string; customId?: number };
+    allowedValues?: Array<{ id: string; name: string; value?: string }>;
+  }): CreateFieldInfo => {
+    const info: CreateFieldInfo = {
+      id: fieldData.fieldId,
+      name: fieldData.name,
+      required: fieldData.required,
+      schema: fieldData.schema,
+    };
+
+    if (fieldData.allowedValues && fieldData.allowedValues.length > 0) {
+      // Limit to first 20 values to avoid huge responses
+      info.allowedValues = fieldData.allowedValues.slice(0, 20);
+      if (fieldData.allowedValues.length > 20) {
+        info.formatHint = `${fieldData.allowedValues.length} values available (showing first 20). Use jira_list_field_values for full list.`;
+      }
+    }
+
+    const hint = getFormatHint(fieldData);
+    if (hint && !info.formatHint) {
+      info.formatHint = hint;
+    }
+
+    return info;
+  };
+
+  // Separate required and optional fields
+  const allFields = Object.values(meta.fields);
+  const requiredFields = allFields
+    .filter((f) => f.required)
+    .map(transformField)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const optionalFields = options?.includeOptional
+    ? allFields
+        .filter((f) => !f.required)
+        .map(transformField)
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : [];
+
+  return {
+    projectKey,
+    issueType: issueType.name,
+    issueTypeId: issueType.id,
+    requiredFields,
+    optionalFields,
+    total: requiredFields.length + optionalFields.length,
+  };
+}
+
 export async function getIssueHistory(
   issueKey: string,
   maxResults = 100,
@@ -1447,7 +1622,7 @@ export async function listFieldValues(options: {
  */
 const DEFAULT_STATUS_GROUPS: Record<string, string[]> = {
   'To Do': ['To Do', 'Open', 'Reopened'],
-  'Blocked': ['Blocked'],
+  'Blocked': ['Blocked', 'Blocked on QA'],
   'In Progress': ['In Progress', 'Ready to Style'],
   'Design Review': ['Design Review'],
   'To Test': ['Ready to Test', 'To Test', 'In Review'],
@@ -1509,6 +1684,8 @@ export async function getSprintReport(
     storyPointsField: string;
     labelsOfInterest?: string[];
     statusGroups?: Record<string, string[]>;
+    bugBacklogStatuses?: string[]; // Statuses to include in bug backlog count (default: all non-done statuses)
+    blockedStatuses?: string[]; // Statuses considered "blocked" (default: ["Blocked"])
     projectKey: string;
     includeTriage?: boolean;
     includeInflow?: boolean;
@@ -1548,8 +1725,8 @@ export async function getSprintReport(
           valueField: options.storyPointsField,
         },
       },
-      issueTypeAllowlist,
-      projectAllowlist
+      projectAllowlist,
+      issueTypeAllowlist
     );
   };
 
@@ -1615,8 +1792,8 @@ export async function getSprintReport(
             valueField: options.storyPointsField,
           },
         },
-        issueTypeAllowlist,
-        projectAllowlist
+        projectAllowlist,
+        issueTypeAllowlist
       );
       return {
         issues: triageStats.total,
@@ -1691,9 +1868,18 @@ export async function getSprintReport(
     }
   }
 
-  // Bug metrics - get bugs in backlog (not in any active sprint)
+  // Bug metrics - get bugs in backlog (not in any active sprint, filtered by configured statuses)
+  // If bugBacklogStatuses is provided, use those; otherwise exclude done statuses
+  let bugBacklogJql: string;
+  if (options.bugBacklogStatuses && options.bugBacklogStatuses.length > 0) {
+    const statusesQuoted = options.bugBacklogStatuses.map(s => `"${s}"`).join(', ');
+    bugBacklogJql = `project = ${options.projectKey} AND type = Bug AND sprint IS EMPTY AND status IN (${statusesQuoted})`;
+  } else {
+    const doneStatusesQuoted = doneStatuses.map(s => `"${s}"`).join(', ');
+    bugBacklogJql = `project = ${options.projectKey} AND type = Bug AND sprint IS EMPTY AND status NOT IN (${doneStatusesQuoted})`;
+  }
   const bugBacklogStats = await getBacklogStats(
-    `project = ${options.projectKey} AND type = Bug AND sprint IS EMPTY`,
+    bugBacklogJql,
     {
       excludeResolved: true,
       pivot: {
@@ -1703,25 +1889,28 @@ export async function getSprintReport(
         valueField: options.storyPointsField,
       },
     },
-    issueTypeAllowlist,
-    projectAllowlist
+    projectAllowlist,
+    issueTypeAllowlist
   );
 
   // Helper to get bug metrics for a sprint
-  const getBugMetrics = (stats: typeof currentStats, fixed: boolean): SprintReportMetrics => {
-    const targetStatuses = fixed ? fixedStatuses :
-      Object.values(statusGroups).flat().filter(s => !fixedStatuses.includes(s));
-
+  // Since the bug query already filters to type=Bug, we use groupedBy.status for issue counts
+  const getBugMetrics = (stats: typeof currentBugStats, fixed: boolean): SprintReportMetrics => {
     let issues = 0;
     let storyPoints = 0;
 
+    const byStatus = stats.groupedBy?.status || stats.byStatus || {};
     const pivotData = stats.pivot?.data || {};
 
-    for (const [status, typeData] of Object.entries(pivotData)) {
-      if (fixed ? fixedStatuses.includes(status) : !fixedStatuses.includes(status)) {
-        // Only count Bug type
-        issues += (stats.byTypeAndStatus?.Bug?.[status] || 0);
-        storyPoints += (typeData as Record<string, number>)['Bug'] || 0;
+    for (const [status, count] of Object.entries(byStatus)) {
+      const isFixedStatus = fixedStatuses.includes(status);
+      if (fixed === isFixedStatus) {
+        issues += count;
+        // Get story points from pivot data
+        const statusRow = pivotData[status];
+        if (statusRow) {
+          storyPoints += Object.values(statusRow).reduce((a, b) => a + b, 0);
+        }
       }
     }
 
@@ -1741,8 +1930,8 @@ export async function getSprintReport(
         valueField: options.storyPointsField,
       },
     },
-    issueTypeAllowlist,
-    projectAllowlist
+    projectAllowlist,
+    issueTypeAllowlist
   );
 
   let previousBugStats: typeof currentBugStats | undefined;
@@ -1759,8 +1948,8 @@ export async function getSprintReport(
           valueField: options.storyPointsField,
         },
       },
-      issueTypeAllowlist,
-      projectAllowlist
+      projectAllowlist,
+      issueTypeAllowlist
     );
   }
 
@@ -1781,8 +1970,8 @@ export async function getSprintReport(
           valueField: options.storyPointsField,
         },
       },
-      issueTypeAllowlist,
-      projectAllowlist
+      projectAllowlist,
+      issueTypeAllowlist
     );
 
     const currentComplete = aggregateStatusGroup(currentLabelStats, doneStatuses);
@@ -1812,8 +2001,8 @@ export async function getSprintReport(
             valueField: options.storyPointsField,
           },
         },
-        issueTypeAllowlist,
-        projectAllowlist
+        projectAllowlist,
+        issueTypeAllowlist
       );
 
       labelResults[label].previous = {
