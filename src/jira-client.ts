@@ -14,6 +14,7 @@ import type {
   JiraComment,
   CreateIssueResponse,
   JiraChangelogResponse,
+  JiraDocument,
 } from './types.js';
 
 interface JiraConfig {
@@ -269,23 +270,12 @@ export class JiraClient {
     });
   }
 
-  async addComment(issueKey: string, body: string): Promise<JiraComment> {
+  async addComment(issueKey: string, body: JiraDocument): Promise<JiraComment> {
     return this.request<JiraComment>(
       `/rest/api/3/issue/${issueKey}/comment`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          body: {
-            type: 'doc',
-            version: 1,
-            content: [
-              {
-                type: 'paragraph',
-                content: [{ type: 'text', text: body }],
-              },
-            ],
-          },
-        }),
+        body: JSON.stringify({ body }),
       }
     );
   }
@@ -436,6 +426,45 @@ export class JiraClient {
       name: string;
       description?: string;
     }>>('/rest/api/3/resolution');
+  }
+
+  // Search for users by query (name, email, or displayName)
+  async searchUsers(query: string, maxResults = 50): Promise<Array<{
+    accountId: string;
+    displayName: string;
+    emailAddress?: string;
+    avatarUrls?: Record<string, string>;
+    active: boolean;
+  }>> {
+    const params = new URLSearchParams({
+      query,
+      maxResults: maxResults.toString(),
+    });
+    return this.request<Array<{
+      accountId: string;
+      displayName: string;
+      emailAddress?: string;
+      avatarUrls?: Record<string, string>;
+      active: boolean;
+    }>>(`/rest/api/3/user/search?${params}`);
+  }
+
+  // Get user by accountId
+  async getUser(accountId: string): Promise<{
+    accountId: string;
+    displayName: string;
+    emailAddress?: string;
+    avatarUrls?: Record<string, string>;
+    active: boolean;
+  }> {
+    const params = new URLSearchParams({ accountId });
+    return this.request<{
+      accountId: string;
+      displayName: string;
+      emailAddress?: string;
+      avatarUrls?: Record<string, string>;
+      active: boolean;
+    }>(`/rest/api/3/user?${params}`);
   }
 
   // Get components for a project

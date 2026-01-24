@@ -61,6 +61,248 @@ export function adfToText(doc: JiraDocument | string | undefined): string {
   return extractText(doc.content);
 }
 
+/**
+ * Convert markdown text to Atlassian Document Format (ADF).
+ * Supports: headings, bold, italic, strikethrough, inline code, code blocks,
+ * bullet lists, numbered lists, links, and mentions.
+ *
+ * Mention syntax: @[accountId](Display Name)
+ * Example: @[5b10ac8d82e05b22cc7d4ef5](John Smith)
+ */
+export function markdownToAdf(markdown: string): JiraDocument {
+  const lines = markdown.split('\n');
+  const content: JiraDocumentNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Code block (fenced)
+    if (line.startsWith('```')) {
+      const language = line.slice(3).trim() || undefined;
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing ```
+      content.push({
+        type: 'codeBlock',
+        attrs: language ? { language } : undefined,
+        content: [{ type: 'text', text: codeLines.join('\n') }],
+      });
+      continue;
+    }
+
+    // Heading
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      content.push({
+        type: 'heading',
+        attrs: { level },
+        content: parseInlineMarkdown(headingMatch[2]),
+      });
+      i++;
+      continue;
+    }
+
+    // Bullet list
+    if (line.match(/^[\s]*[-*]\s+/)) {
+      const listItems: JiraDocumentNode[] = [];
+      while (i < lines.length && lines[i].match(/^[\s]*[-*]\s+/)) {
+        const itemText = lines[i].replace(/^[\s]*[-*]\s+/, '');
+        listItems.push({
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: parseInlineMarkdown(itemText),
+            },
+          ],
+        });
+        i++;
+      }
+      content.push({
+        type: 'bulletList',
+        content: listItems,
+      });
+      continue;
+    }
+
+    // Numbered list
+    if (line.match(/^[\s]*\d+\.\s+/)) {
+      const listItems: JiraDocumentNode[] = [];
+      while (i < lines.length && lines[i].match(/^[\s]*\d+\.\s+/)) {
+        const itemText = lines[i].replace(/^[\s]*\d+\.\s+/, '');
+        listItems.push({
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: parseInlineMarkdown(itemText),
+            },
+          ],
+        });
+        i++;
+      }
+      content.push({
+        type: 'orderedList',
+        content: listItems,
+      });
+      continue;
+    }
+
+    // Empty line - skip (don't create empty paragraphs)
+    if (line.trim() === '') {
+      i++;
+      continue;
+    }
+
+    // Regular paragraph
+    content.push({
+      type: 'paragraph',
+      content: parseInlineMarkdown(line),
+    });
+    i++;
+  }
+
+  // If no content was created, add an empty paragraph
+  if (content.length === 0) {
+    content.push({
+      type: 'paragraph',
+      content: [],
+    });
+  }
+
+  return {
+    type: 'doc',
+    version: 1,
+    content,
+  };
+}
+
+/**
+ * Parse inline markdown formatting (bold, italic, code, links, etc.)
+ */
+function parseInlineMarkdown(text: string): JiraDocumentNode[] {
+  const nodes: JiraDocumentNode[] = [];
+
+  // Regex patterns for inline formatting
+  // Order matters: more specific patterns first
+  const patterns = [
+    // Mentions: @[accountId](display name) - must come before links to avoid collision
+    { regex: /@\[([^\]]+)\]\(([^)]+)\)/g, type: 'mention' },
+    // Links: [text](url)
+    { regex: /\[([^\]]+)\]\(([^)]+)\)/g, type: 'link' },
+    // Bold+Italic: ***text*** or ___text___
+    { regex: /(\*\*\*|___)(.+?)\1/g, type: 'bold-italic' },
+    // Bold: **text** or __text__
+    { regex: /(\*\*|__)(.+?)\1/g, type: 'bold' },
+    // Italic: *text* or _text_
+    { regex: /(\*|_)(.+?)\1/g, type: 'italic' },
+    // Strikethrough: ~~text~~
+    { regex: /~~(.+?)~~/g, type: 'strike' },
+    // Inline code: `text`
+    { regex: /`([^`]+)`/g, type: 'code' },
+  ];
+
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    let earliestMatch: { index: number; length: number; node: JiraDocumentNode } | null = null;
+
+    for (const pattern of patterns) {
+      pattern.regex.lastIndex = 0;
+      const match = pattern.regex.exec(remaining);
+      if (match && (earliestMatch === null || match.index < earliestMatch.index)) {
+        let node: JiraDocumentNode;
+
+        if (pattern.type === 'mention') {
+          // Mentions: @[accountId](display name)
+          node = {
+            type: 'mention',
+            attrs: {
+              id: match[1],       // accountId
+              text: `@${match[2]}`, // display name with @ prefix
+            },
+          };
+        } else if (pattern.type === 'link') {
+          node = {
+            type: 'text',
+            text: match[1],
+            marks: [{ type: 'link', attrs: { href: match[2] } }],
+          };
+        } else if (pattern.type === 'code') {
+          node = {
+            type: 'text',
+            text: match[1],
+            marks: [{ type: 'code' }],
+          };
+        } else if (pattern.type === 'bold-italic') {
+          node = {
+            type: 'text',
+            text: match[2],
+            marks: [{ type: 'strong' }, { type: 'em' }],
+          };
+        } else if (pattern.type === 'bold') {
+          node = {
+            type: 'text',
+            text: match[2],
+            marks: [{ type: 'strong' }],
+          };
+        } else if (pattern.type === 'italic') {
+          node = {
+            type: 'text',
+            text: match[2],
+            marks: [{ type: 'em' }],
+          };
+        } else if (pattern.type === 'strike') {
+          node = {
+            type: 'text',
+            text: match[1],
+            marks: [{ type: 'strike' }],
+          };
+        } else {
+          continue;
+        }
+
+        earliestMatch = {
+          index: match.index,
+          length: match[0].length,
+          node,
+        };
+      }
+    }
+
+    if (earliestMatch) {
+      // Add plain text before the match
+      if (earliestMatch.index > 0) {
+        nodes.push({
+          type: 'text',
+          text: remaining.slice(0, earliestMatch.index),
+        });
+      }
+      // Add the formatted node
+      nodes.push(earliestMatch.node);
+      // Continue with remaining text
+      remaining = remaining.slice(earliestMatch.index + earliestMatch.length);
+    } else {
+      // No more matches, add remaining as plain text
+      if (remaining.length > 0) {
+        nodes.push({
+          type: 'text',
+          text: remaining,
+        });
+      }
+      break;
+    }
+  }
+
+  return nodes;
+}
+
 // Extract parent epic from issue fields
 // Handles both next-gen (fields.parent) and classic (customfield_* epic link) projects
 export function extractParent(fields: Record<string, unknown>): IssueDetails['parent'] | undefined {
@@ -486,16 +728,8 @@ export async function updateIssue(
   }
 
   if (updates.description !== undefined) {
-    fields.description = {
-      type: 'doc',
-      version: 1,
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: updates.description }],
-        },
-      ],
-    };
+    // Convert markdown to ADF for rich formatting support
+    fields.description = markdownToAdf(updates.description);
   }
 
   if (updates.assignee !== undefined) {
@@ -580,7 +814,9 @@ export async function addComment(
 
   const client = getJiraClient();
 
-  const comment = await client.addComment(issueKey, body);
+  // Convert markdown to ADF for rich formatting support
+  const adfBody = markdownToAdf(body);
+  const comment = await client.addComment(issueKey, adfBody);
 
   return { success: true, issueKey, commentId: comment.id };
 }
@@ -621,16 +857,8 @@ export async function createIssue(
   };
 
   if (options.description) {
-    fields.description = {
-      type: 'doc',
-      version: 1,
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'text', text: options.description }],
-        },
-      ],
-    };
+    // Convert markdown to ADF for rich formatting support
+    fields.description = markdownToAdf(options.description);
   }
 
   if (options.priority) {

@@ -16,6 +16,7 @@ export const SCOPES = {
   'comments:write': ['jira_add_comment'],
   'attachments:read': ['jira_list_attachments', 'jira_download_attachment'],
   'attachments:write': ['jira_upload_attachment'],
+  'users:read': ['jira_search_users'],
   'debug': ['jira_debug_search'],
 } as const;
 

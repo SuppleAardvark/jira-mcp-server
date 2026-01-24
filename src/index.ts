@@ -28,6 +28,7 @@ import {
   type ListableField,
 } from './tools/issues.js';
 import { listAttachments, downloadAttachment, uploadAttachment } from './tools/attachments.js';
+import { getJiraClient } from './jira-client.js';
 import { parseScopes, isToolAllowed, parseAllowlist, parseIssueTypesAllowlist, parseProjectAllowlist } from './permissions.js';
 
 // Parse permission scopes from environment variable
@@ -702,6 +703,24 @@ const allTools = [
         required: ['field'],
       },
     },
+    {
+      name: 'jira_search_users',
+      description: 'Search for JIRA users by name, email, or display name. Returns accountId which can be used for mentions or assignments.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query (name, email, or display name)',
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of users to return (default: 50)',
+          },
+        },
+        required: ['query'],
+      },
+    },
 
     // Debug tools
     {
@@ -1071,6 +1090,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const searchTerm = args?.searchTerm as string | undefined;
         const maxResults = args?.maxResults as number | undefined;
         const result = await listFieldValues({ field, projectKey, searchTerm, maxResults });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      // User search tool
+      case 'jira_search_users': {
+        const query = args?.query as string;
+        if (!query) {
+          throw new Error('query is required');
+        }
+        const maxResults = args?.maxResults as number | undefined;
+        const client = getJiraClient();
+        const users = await client.searchUsers(query, maxResults);
+        const result = users.map((u: { accountId: string; displayName: string; emailAddress?: string; active: boolean }) => ({
+          accountId: u.accountId,
+          displayName: u.displayName,
+          emailAddress: u.emailAddress,
+          active: u.active,
+        }));
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
